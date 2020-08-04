@@ -1,3 +1,4 @@
+# coding: utf-8
 # frozen_string_literal: true
 
 require "securerandom"
@@ -95,7 +96,8 @@ module Sidekiq
     end
   end
 
-  Sidekiq::Client.prepend TestingClient
+  ## MKCHANGE: commented out below because it's giving issues for leaving out above method
+  #Sidekiq::Client.prepend TestingClient
 
   module Queues
     ##
@@ -174,11 +176,11 @@ module Sidekiq
       end
 
       def jobs_by_queue
-        @jobs_by_queue ||= Hash.new { |hash, key| hash[key] = [] }
+        @jobs_by_queue ||= RDL.type_cast(Hash.new { |hash, key| hash[key] = [] }, "Hash<String, Array<Sidekiq::Job>>")
       end
 
       def jobs_by_worker
-        @jobs_by_worker ||= Hash.new { |hash, key| hash[key] = [] }
+        @jobs_by_worker ||= RDL.type_cast(Hash.new { |hash, key| hash[key] = [] }, "Hash<String, Array<Sidekiq::Job>>")
       end
 
       def delete_for(jid, queue, klass)
@@ -303,7 +305,7 @@ module Sidekiq
 
     class << self
       def jobs # :nodoc:
-        Queues.jobs_by_queue.values.flatten
+        RDL.type_cast(Queues.jobs_by_queue.values.flatten, "Array<Sidekiq::Job>")
       end
 
       # Clear all queued jobs across all workers

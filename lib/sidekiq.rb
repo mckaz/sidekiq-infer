@@ -1,13 +1,14 @@
+# coding: utf-8
 # frozen_string_literal: true
 
-require "sidekiq/version"
+require_relative "sidekiq/version"
 fail "Sidekiq #{Sidekiq::VERSION} does not support Ruby versions below 2.5.0." if RUBY_PLATFORM != "java" && Gem::Version.new(RUBY_VERSION) < Gem::Version.new("2.5.0")
 
-require "sidekiq/logger"
-require "sidekiq/client"
-require "sidekiq/worker"
-require "sidekiq/redis_connection"
-require "sidekiq/delay"
+require_relative "sidekiq/logger"
+require_relative "sidekiq/client"
+require_relative "sidekiq/worker"
+require_relative "sidekiq/redis_connection"
+require_relative "sidekiq/delay"
 
 require "json"
 

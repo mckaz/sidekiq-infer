@@ -82,7 +82,7 @@ module Sidekiq
     def get_one
       work = @strategy.retrieve_work
       if @down
-        logger.info { "Redis is online, #{::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - @down} sec downtime" }
+        logger.info { "Redis is online, #{::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - RDL.type_cast(@down, "Float")} sec downtime" }
         @down = nil
       end
       work
@@ -161,7 +161,7 @@ module Sidekiq
       begin
         dispatch(job_hash, queue, jobstr) do |worker|
           Sidekiq.server_middleware.invoke(worker, job_hash, queue) do
-            execute_job(worker, job_hash["args"])
+            execute_job(worker, RDL.type_cast(job_hash, "Hash<String, Object>")["args"])
           end
         end
         ack = true

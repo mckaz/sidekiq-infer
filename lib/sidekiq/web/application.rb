@@ -298,7 +298,7 @@ module Sidekiq
         self.class.run_afters(app, action)
       end
 
-      resp = case resp
+      resp = RDL.type_cast(case resp
       when Array
         resp
       else
@@ -310,11 +310,11 @@ module Sidekiq
         }
 
         [200, headers, [resp]]
-      end
+      end, "[Integer, Hash<String, String>, Array<String>]")
 
       resp[1] = resp[1].dup
 
-      resp[1][CONTENT_LENGTH] = resp[2].sum(&:bytesize).to_s
+      RDL.type_cast(resp[1], "Hash<String, String>")[CONTENT_LENGTH] = RDL.type_cast(resp[2], "Array<String>").sum(&:bytesize).to_s
 
       resp
     end

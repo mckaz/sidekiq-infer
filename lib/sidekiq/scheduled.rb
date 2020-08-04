@@ -1,3 +1,4 @@
+# coding: utf-8
 # frozen_string_literal: true
 
 require "sidekiq"
@@ -75,7 +76,7 @@ module Sidekiq
       end
 
       def enqueue
-        @enq.enqueue_jobs
+        RDL.type_cast(@enq, "Sidekiq::Scheduled::Enq").enqueue_jobs ## needed because otherwise method with no args is not a subtype of method with optional args
       rescue => ex
         # Most likely a problem with redis networking.
         # Punt and try again at the next interval

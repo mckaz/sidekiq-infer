@@ -79,14 +79,19 @@ describe 'Actors' do
     end
 
     it 'can process' do
+      raise "HERE 1"
       mgr = Mgr.new
-
+      puts "HERE 2"
       p = Sidekiq::Processor.new(mgr)
+      puts "HERE 3"
       JoeWorker.perform_async(0)
-
+      puts "HERE 4"
       a = $count
+      puts "HERE 5"
       p.process_one
+      puts "HERE 6"
       b = $count
+      puts "HERE 7"
       assert_equal a + 1, b
     end
 

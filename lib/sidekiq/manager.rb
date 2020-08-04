@@ -106,7 +106,7 @@ module Sidekiq
     def hard_shutdown
       # We've reached the timeout and we still have busy workers.
       # They must die but their jobs shall live on.
-      cleanup = nil
+      cleanup = RDL.type_cast(nil, "Set<Sidekiq::Processor>", force: true)
       @plock.synchronize do
         cleanup = @workers.dup
       end

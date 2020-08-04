@@ -207,7 +207,7 @@ module Sidekiq
         now = Time.now.to_f
         ts = (int < 1_000_000_000 ? now + int : int)
 
-        item = {"class" => self, "args" => args}
+        item = RDL.type_cast({"class" => self, "args" => args}, "Hash<String, Array or Class or Integer>")
 
         # Optimization to enqueue something now that is scheduled to go out now or in the past
         item["at"] = ts if ts > now

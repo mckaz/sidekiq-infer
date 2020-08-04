@@ -116,6 +116,7 @@ class Sidekiq::Monitor
     end
 
     QUEUE_STRUCT = Struct.new(:name, :size, :latency)
+
     def queue_data
       @queue_data ||= Sidekiq::Queue.all.map { |q|
         QUEUE_STRUCT.new(q.name, q.size.to_s, sprintf("%#.2f", q.latency))

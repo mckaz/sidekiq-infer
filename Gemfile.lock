@@ -7,6 +7,14 @@ PATH
       rack-protection (>= 2.0.0)
       redis (>= 4.1.0)
 
+PATH
+  remote: ../type-infer/rdl
+  specs:
+    rdl (2.2.0)
+      method_source
+      parser (~> 2.3, >= 2.3.1.4)
+      sql-parser (~> 0.0.2)
+
 GEM
   remote: https://rubygems.org/
   specs:
@@ -105,6 +113,7 @@ GEM
     pry-byebug (3.7.0)
       byebug (~> 11.0)
       pry (~> 0.10)
+    racc (1.4.16)
     rack (2.0.7)
     rack-protection (2.0.7)
       rack
@@ -163,6 +172,8 @@ GEM
       actionpack (>= 4.0)
       activesupport (>= 4.0)
       sprockets (>= 3.0.0)
+    sql-parser (0.0.2)
+      racc
     sqlite3 (1.4.1)
     standard (0.1.6)
       rubocop (~> 0.75.0)
@@ -188,6 +199,7 @@ DEPENDENCIES
   pry-byebug
   rails (>= 6.0.2)
   rake
+  rdl!
   redis-namespace
   sidekiq!
   simplecov

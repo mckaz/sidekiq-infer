@@ -1,0 +1,2483 @@
+Class,Method,Inferred Type,Original Type,Source Code,Comments
+Sidekiq::Stats,initialize,() -> self,,"def initialize
+      fetch_stats!
+    end"
+Sidekiq::Stats,processed,() -> XXX,,"def processed
+      stat :processed
+    end"
+Sidekiq::Stats,failed,() -> XXX,,"def failed
+      stat :failed
+    end"
+Sidekiq::Stats,scheduled_size,() -> XXX,,"def scheduled_size
+      stat :scheduled_size
+    end"
+Sidekiq::Stats,retry_size,() -> XXX,,"def retry_size
+      stat :retry_size
+    end"
+Sidekiq::Stats,dead_size,() -> XXX,,"def dead_size
+      stat :dead_size
+    end"
+Sidekiq::Stats,enqueued,() -> XXX,,"def enqueued
+      stat :enqueued
+    end"
+Sidekiq::Stats,processes_size,() -> XXX,,"def processes_size
+      stat :processes_size
+    end"
+Sidekiq::Stats,workers_size,() -> XXX,,"def workers_size
+      stat :workers_size
+    end"
+Sidekiq::Stats,default_queue_latency,() -> XXX,,"def default_queue_latency
+      stat :default_queue_latency
+    end"
+Sidekiq::Stats,queues,() -> XXX,,"def queues
+      Sidekiq::Stats::Queues.new.lengths
+    end"
+Sidekiq::Stats,fetch_stats!,"() -> { processed: Number, failed: Number, scheduled_size: XXX, retry_size: XXX, dead_size: XXX, processes_size: XXX, default_queue_latency: Number, workers_size: XXX, enqueued: XXX }",,"def fetch_stats!
+      pipe1_res = Sidekiq.redis { |conn|
+        conn.pipelined do
+          conn.get(""stat:processed"")
+          conn.get(""stat:failed"")
+          conn.zcard(""schedule"")
+          conn.zcard(""retry"")
+          conn.zcard(""dead"")
+          conn.scard(""processes"")
+          conn.lrange(""queue:default"", -1, -1)
+        end
+      }
+
+      processes = Sidekiq.redis { |conn|
+        conn.sscan_each(""processes"").to_a
+      }
+
+      queues = Sidekiq.redis { |conn|
+        conn.sscan_each(""queues"").to_a
+      }
+
+      pipe2_res = Sidekiq.redis { |conn|
+        conn.pipelined do
+          processes.each { |key| conn.hget(key, ""busy"") }
+          queues.each { |queue| conn.llen(""queue:#{queue}"") }
+        end
+      }
+
+      s = processes.size
+      workers_size = pipe2_res[0...s].sum(&:to_i)
+      enqueued = pipe2_res[s..-1].sum(&:to_i)
+
+      default_queue_latency = if (entry = pipe1_res[6].first)
+        job = begin
+                Sidekiq.load_json(entry)
+              rescue
+                {}
+              end
+        now = Time.now.to_f
+        thence = job[""enqueued_at""] || now
+        now - thence
+      else
+        0
+      end
+      @stats = {
+        processed: pipe1_res[0].to_i,
+        failed: pipe1_res[1].to_i,
+        scheduled_size: pipe1_res[2],
+        retry_size: pipe1_res[3],
+        dead_size: pipe1_res[4],
+        processes_size: pipe1_res[5],
+
+        default_queue_latency: default_queue_latency,
+        workers_size: workers_size,
+        enqueued: enqueued,
+      }
+    end"
+Sidekiq::Stats,reset,(*XXX) -> XXX,,"def reset(*stats)
+      all = %w[failed processed]
+      stats = stats.empty? ? all : all & RDL.type_cast(stats.flatten, ""Array<Integer>"").compact.map(&:to_s)
+
+      mset_args = []
+      stats.each do |stat|
+        mset_args << ""stat:#{stat}""
+        mset_args << 0
+      end
+      Sidekiq.redis do |conn|
+        conn.mset(*mset_args)
+      end
+    end"
+Sidekiq::Stats,stat,(XXX) -> XXX,,"def stat(s)
+      @stats[s]
+    end"
+Sidekiq::Stats::Queues,lengths,() -> XXX,,"def lengths
+        Sidekiq.redis do |conn|
+          queues = conn.sscan_each(""queues"").to_a
+
+          lengths = conn.pipelined {
+            queues.each do |queue|
+              conn.llen(""queue:#{queue}"")
+            end
+          }
+
+          array_of_arrays = queues.zip(lengths).sort_by { |_, size| -size }
+          Hash[array_of_arrays]
+        end
+      end"
+Sidekiq::Stats::History,initialize,"(XXX, ?((XXX or XXX))) -> self",,"def initialize(days_previous, start_date = nil)
+        @days_previous = days_previous
+        @start_date = start_date || Time.now.utc.to_date
+      end"
+Sidekiq::Stats::History,processed,"() -> Hash<XXX, Number>",,"def processed
+        @processed ||= date_stat_hash(""processed"")
+      end"
+Sidekiq::Stats::History,failed,"() -> Hash<XXX, Number>",,"def failed
+        @failed ||= date_stat_hash(""failed"")
+      end"
+Sidekiq::Stats::History,date_stat_hash,"(XXX) -> Hash<XXX, Number>",,"def date_stat_hash(stat)
+        stat_hash = {}
+        dates = @start_date.downto(@start_date - @days_previous + 1).map { |date|
+          date.strftime(""%Y-%m-%d"")
+        }
+
+        keys = dates.map { |datestr| ""stat:#{stat}:#{datestr}"" }
+
+        begin
+          Sidekiq.redis do |conn|
+            conn.mget(keys).each_with_index do |value, idx|
+              stat_hash[dates[idx]] = value ? value.to_i : 0
+            end
+          end
+        rescue Redis::CommandError
+          # mget will trigger a CROSSSLOT error when run against a Cluster
+          # TODO Someone want to add Cluster support?
+        end
+
+        stat_hash
+      end"
+Sidekiq::Queue,initialize,(?String) -> self,,"def initialize(name = ""default"")
+      @name = name.to_s
+      @rname = ""queue:#{name}""
+    end"
+Sidekiq::Queue,size,() -> XXX,,"def size
+      Sidekiq.redis { |con| con.llen(@rname) }
+    end"
+Sidekiq::Queue,paused?,() -> false,,"def paused?
+      false
+    end"
+Sidekiq::Queue,latency,() -> Number,,"def latency
+      entry = Sidekiq.redis { |conn|
+        conn.lrange(@rname, -1, -1)
+      }.first
+      return 0 unless entry
+      job = Sidekiq.load_json(entry)
+      now = Time.now.to_f
+      thence = job[""enqueued_at""] || now
+      now - thence
+    end"
+Sidekiq::Queue,each,() { (Sidekiq::Job) -> XXX } -> XXX,,"def each
+      initial_size = size
+      deleted_size = 0
+      page = 0
+      page_size = 50
+
+      loop do
+        range_start = page * page_size - deleted_size
+        range_end = range_start + page_size - 1
+        entries = Sidekiq.redis { |conn|
+          conn.lrange @rname, range_start, range_end
+        }
+        break if entries.empty?
+        page += 1
+        entries.each do |entry|
+          yield Job.new(entry, @name)
+        end
+        deleted_size = initial_size - size
+      end
+    end"
+Sidekiq::Queue,find_job,(Number) -> XXX,,"def find_job(jid)
+      detect { |j| j.jid == jid }
+    end"
+Sidekiq::Queue,clear,() -> XXX,,"def clear
+      Sidekiq.redis do |conn|
+        conn.multi do
+          conn.del(@rname)
+          conn.srem(""queues"", name)
+        end
+      end
+    end"
+Sidekiq::Job,initialize,"(([ []: (String) -> XXX ] and [ is_a?: (Class) -> XXX ]), ?String) -> self",,"def initialize(item, queue_name = nil)
+      @args = nil
+      @value = item
+      @item = item.is_a?(Hash) ? item : parse(item)
+      @queue = queue_name || @item[""queue""]
+    end"
+Sidekiq::Job,parse,"([ []: (String) -> XXX ]) -> Hash<String, XXX>",,"def parse(item)
+      Sidekiq.load_json(item)
+    rescue JSON::ParserError
+      # If the job payload in Redis is invalid JSON, we'll load
+      # the item as an empty hash and store the invalid JSON as
+      # the job 'args' for display in the Web UI.
+      @invalid = true
+      @args = [item]
+      {}
+    end"
+Sidekiq::Job,klass,() -> nil,,"def klass
+      self[""class""]
+    end"
+Sidekiq::Job,display_class,() -> nil,,"def display_class
+      # Unwrap known wrappers so they show up in a human-friendly manner in the Web UI
+      @klass ||= case klass
+                 when /\ASidekiq::Extensions::Delayed/
+                   safe_load(args[0], klass) do |target, method, _|
+                     ""#{target}.#{method}""
+                   end
+                 when ""ActiveJob::QueueAdapters::SidekiqAdapter::JobWrapper""
+                   job_class = @item[""wrapped""] || args[0]
+                   if job_class == ""ActionMailer::DeliveryJob"" || job_class == ""ActionMailer::MailDeliveryJob""
+                     # MailerClass#mailer_method
+                     args[0][""arguments""][0..1].join(""#"")
+                   else
+                     job_class
+                   end
+                 else
+                   klass
+      end
+    end"
+Sidekiq::Job,display_args,() -> Array<XXX>,,"def display_args
+      # Unwrap known wrappers so they show up in a human-friendly manner in the Web UI
+      @display_args ||= case klass
+                when /\ASidekiq::Extensions::Delayed/
+                  safe_load(args[0], args) do |_, _, arg|
+                    arg
+                  end
+                when ""ActiveJob::QueueAdapters::SidekiqAdapter::JobWrapper""
+                  job_args = self[""wrapped""] ? args[0][""arguments""] : []
+                  if (self[""wrapped""] || args[0]) == ""ActionMailer::DeliveryJob""
+                    # remove MailerClass, mailer_method and 'deliver_now'
+                    job_args.drop(3)
+                  elsif (self[""wrapped""] || args[0]) == ""ActionMailer::MailDeliveryJob""
+                    # remove MailerClass, mailer_method and 'deliver_now'
+                    job_args.drop(3).first[""args""]
+                  else
+                    job_args
+                  end
+                else
+                  if self[""encrypt""]
+                    # no point in showing 150+ bytes of random garbage
+                    args[-1] = ""[encrypted data]""
+                  end
+                  args
+      end
+    end"
+Sidekiq::Job,args,() -> Array<(String or XXX)>,,"def args
+      @args || @item[""args""]
+    end"
+Sidekiq::Job,jid,() -> Number,,"def jid
+      self[""jid""]
+    end"
+Sidekiq::Job,enqueued_at,() -> Time,,"def enqueued_at
+      self[""enqueued_at""] ? Time.at(self[""enqueued_at""]).utc : nil
+    end"
+Sidekiq::Job,created_at,() -> Time,,"def created_at
+      Time.at(self[""created_at""] || self[""enqueued_at""] || 0).utc
+    end"
+Sidekiq::Job,tags,() -> Array<XXX>,,"def tags
+      self[""tags""] || []
+    end"
+Sidekiq::Job,error_backtrace,() -> Object,,"def error_backtrace
+      # Cache nil values
+      if defined?(@error_backtrace)
+        @error_backtrace
+      else
+        value = self[""error_backtrace""]
+        @error_backtrace = value && uncompress_backtrace(value)
+      end
+    end"
+Sidekiq::Job,latency,() -> Number,,"def latency
+      now = Time.now.to_f
+      now - (@item[""enqueued_at""] || @item[""created_at""] || now)
+    end"
+Sidekiq::Job,delete,() -> XXX,,"def delete
+      count = Sidekiq.redis { |conn|
+        conn.lrem(""queue:#{@queue}"", 1, @value)
+      }
+      count != 0
+    end"
+Sidekiq::Job,[],(String) -> nil,,"def [](name)
+      # nil will happen if the JSON fails to parse.
+      # We don't guarantee Sidekiq will work with bad job JSON but we should
+      # make a best effort to minimize the damage.
+      @item ? @item[name] : nil
+    end"
+Sidekiq::Job,uncompress_backtrace,(String) -> Object,,"def uncompress_backtrace(backtrace)
+      if backtrace.is_a?(Array)
+        # Handle old jobs with raw Array backtrace format
+        backtrace
+      else
+        decoded = Base64.decode64(backtrace)
+        uncompressed = Zlib::Inflate.inflate(decoded)
+        begin
+          Sidekiq.load_json(uncompressed)
+        rescue
+          # Handle old jobs with marshalled backtrace format
+          # TODO Remove in 7.x
+          Marshal.load(uncompressed)
+        end
+      end
+    end"
+Sidekiq::SortedEntry,initialize,"(Sidekiq::JobSet, XXX, ([ []: (String) -> XXX ] and [ is_a?: (Class) -> XXX ])) -> self",,"def initialize(parent, score, item)
+      super(item)
+      @score = score
+      @parent = parent
+    end"
+Sidekiq::SortedEntry,at,() -> Time,,"def at
+      Time.at(score).utc
+    end"
+Sidekiq::SortedEntry,delete,() -> XXX,,"def delete
+      if @value
+        @parent.delete_by_value(@parent.name, @value)
+      else
+        @parent.delete_by_jid(score, jid)
+      end
+    end"
+Sidekiq::SortedEntry,reschedule,([ to_f: () -> XXX ]) -> XXX,,"def reschedule(at)
+      Sidekiq.redis do |conn|
+        conn.zincrby(@parent.name, at.to_f - @score, Sidekiq.dump_json(@item))
+      end
+    end"
+Sidekiq::SortedEntry,add_to_queue,() -> XXX,,"def add_to_queue
+      remove_job do |message|
+        msg = Sidekiq.load_json(message)
+        Sidekiq::Client.push(msg)
+      end
+    end"
+Sidekiq::SortedEntry,retry,() -> XXX,,"def retry
+      remove_job do |message|
+        msg = Sidekiq.load_json(message)
+        msg[""retry_count""] -= 1 if msg[""retry_count""]
+        Sidekiq::Client.push(msg)
+      end
+    end"
+Sidekiq::SortedEntry,kill,() -> XXX,,"def kill
+      remove_job do |message|
+        DeadSet.new.kill(message)
+      end
+    end"
+Sidekiq::SortedEntry,error?,() -> (false or true),,"def error?
+      !!item[""error_class""]
+    end"
+Sidekiq::SortedEntry,remove_job,() { (XXX) -> (nil or true) } -> XXX,,"def remove_job
+      Sidekiq.redis do |conn|
+        results = conn.multi {
+          conn.zrangebyscore(parent.name, score, score)
+          conn.zremrangebyscore(parent.name, score, score)
+        }.first
+
+        if results.size == 1
+          yield results.first
+        else
+          # multiple jobs with the same score
+          # find the one with the right JID and push it
+          matched, nonmatched = results.partition { |message|
+            if message.index(jid)
+              msg = Sidekiq.load_json(message)
+              msg[""jid""] == jid
+            else
+              false
+            end
+          }
+
+          msg = matched.first
+          yield msg if msg
+
+          # push the rest back onto the sorted set
+          conn.multi do
+            nonmatched.each do |message|
+              conn.zadd(parent.name, score.to_f.to_s, message)
+            end
+          end
+        end
+      end
+    end"
+Sidekiq::SortedSet,initialize,(String) -> self,,"def initialize(name)
+      @name = name
+      @_size = size
+    end"
+Sidekiq::SortedSet,size,() -> XXX,,"def size
+      Sidekiq.redis { |c| c.zcard(name) }
+    end"
+Sidekiq::SortedSet,clear,() -> XXX,,"def clear
+      Sidekiq.redis do |conn|
+        conn.del(name)
+      end
+    end"
+Sidekiq::JobSet,schedule,"([ to_f: () -> XXX ], XXX) -> XXX",,"def schedule(timestamp, message)
+      Sidekiq.redis do |conn|
+        conn.zadd(name, timestamp.to_f.to_s, Sidekiq.dump_json(message))
+      end
+    end"
+Sidekiq::JobSet,each,() { (Sidekiq::SortedEntry) -> XXX } -> XXX,,"def each
+      initial_size = @_size
+      offset_size = 0
+      page = -1
+      page_size = 50
+
+      loop do
+        range_start = page * page_size + offset_size
+        range_end = range_start + page_size - 1
+        elements = Sidekiq.redis { |conn|
+          conn.zrange name, range_start, range_end, with_scores: true
+        }
+        break if elements.empty?
+        page -= 1
+        elements.reverse_each do |element, score|
+          yield SortedEntry.new(self, score, element)
+        end
+        offset_size = initial_size - @_size
+      end
+    end"
+Sidekiq::JobSet,fetch,"((Array or Enumerator::ArithmeticSequence or Rake::FileList or Range), ?Number) -> XXX",,"def fetch(score, jid = nil)
+      begin_score, end_score =
+        if score.is_a?(Range)
+          [score.first, score.last]
+        else
+          [score, score]
+        end
+
+      elements = Sidekiq.redis { |conn|
+        conn.zrangebyscore(name, begin_score, end_score, with_scores: true)
+      }
+
+      elements.each_with_object([]) do |element, result|
+        data, job_score = element
+        entry = SortedEntry.new(self, job_score, data)
+        result << entry if jid.nil? || entry.jid == jid
+      end
+    end"
+Sidekiq::JobSet,find_job,(Number) -> Sidekiq::SortedEntry,,"def find_job(jid)
+      Sidekiq.redis do |conn|
+        conn.zscan_each(name, match: ""*#{jid}*"", count: 100) do |entry, score|
+          job = JSON.parse(entry)
+          matched = job[""jid""] == jid
+          return SortedEntry.new(self, score, entry) if matched
+        end
+      end
+      nil
+    end"
+Sidekiq::JobSet,delete_by_value,"(String, XXX) -> XXX",,"def delete_by_value(name, value)
+      Sidekiq.redis do |conn|
+        ret = conn.zrem(name, value)
+        @_size -= 1 if ret
+        ret
+      end
+    end"
+Sidekiq::ScheduledSet,initialize,() -> self,,"def initialize
+      super ""schedule""
+    end"
+Sidekiq::RetrySet,initialize,() -> self,,"def initialize
+      super ""retry""
+    end"
+Sidekiq::DeadSet,initialize,() -> self,,"def initialize
+      super ""dead""
+    end"
+Sidekiq::DeadSet,kill,"(XXX, ?[ []: (:notify_failure) -> XXX ]) -> true",,"def kill(message, opts = {})
+      now = Time.now.to_f
+      Sidekiq.redis do |conn|
+        conn.multi do
+          conn.zadd(name, now.to_s, message)
+          conn.zremrangebyscore(name, ""-inf"", now - self.class.timeout)
+          conn.zremrangebyrank(name, 0, - self.class.max_jobs)
+        end
+      end
+
+      if opts[:notify_failure] != false
+        job = Sidekiq.load_json(message)
+        r = RuntimeError.new(""Job killed by API"")
+        r.set_backtrace(caller)
+        Sidekiq.death_handlers.each do |handle|
+          handle.call(job, r)
+        end
+      end
+      true
+    end"
+Sidekiq::ProcessSet,initialize,(?XXX) -> self,,"def initialize(clean_plz = true)
+      cleanup if clean_plz
+    end"
+Sidekiq::ProcessSet,cleanup,() -> Number,,"def cleanup
+      count = 0
+      Sidekiq.redis do |conn|
+        procs = conn.sscan_each(""processes"").to_a.sort
+        heartbeats = conn.pipelined {
+          procs.each do |key|
+            conn.hget(key, ""info"")
+          end
+        }
+
+        # the hash named key has an expiry of 60 seconds.
+        # if it's not found, that means the process has not reported
+        # in to Redis and probably died.
+        to_prune = procs.select.with_index { |proc, i|
+          heartbeats[i].nil?
+        }
+        count = conn.srem(""processes"", to_prune) unless to_prune.empty?
+      end
+      count
+    end"
+Sidekiq::ProcessSet,each,() { (Sidekiq::Process) -> XXX } -> XXX,,"def each
+      result = Sidekiq.redis { |conn|
+        procs = conn.sscan_each(""processes"").to_a.sort
+
+        # We're making a tradeoff here between consuming more memory instead of
+        # making more roundtrips to Redis, but if you have hundreds or thousands of workers,
+        # you'll be happier this way
+        conn.pipelined do
+          procs.each do |key|
+            conn.hmget(key, ""info"", ""busy"", ""beat"", ""quiet"")
+          end
+        end
+      }
+
+      result.each do |info, busy, at_s, quiet|
+        # If a process is stopped between when we query Redis for `procs` and
+        # when we query for `result`, we will have an item in `result` that is
+        # composed of `nil` values.
+        next if info.nil?
+
+        hash = Sidekiq.load_json(info)
+        yield Process.new(hash.merge(""busy"" => busy.to_i, ""beat"" => at_s.to_f, ""quiet"" => quiet))
+      end
+    end"
+Sidekiq::ProcessSet,size,() -> XXX,,"def size
+      Sidekiq.redis { |conn| conn.scard(""processes"") }
+    end"
+Sidekiq::ProcessSet,leader,() -> String,,"def leader
+      @leader ||= begin
+        x = Sidekiq.redis { |c| c.get(""dear-leader"") }
+        # need a non-falsy value so we can memoize
+        x ||= """"
+        x
+      end
+    end"
+Sidekiq::Process,initialize,([ []: (XXX) -> XXX ]) -> self,,"def initialize(hash)
+      @attribs = hash
+    end"
+Sidekiq::Process,tag,() -> XXX,,"def tag
+      self[""tag""]
+    end"
+Sidekiq::Process,labels,() -> Array<t>,,"def labels
+      Array(self[""labels""])
+    end"
+Sidekiq::Process,[],(XXX) -> XXX,,"def [](key)
+      @attribs[key]
+    end"
+Sidekiq::Process,identity,() -> XXX,,"def identity
+      self[""identity""]
+    end"
+Sidekiq::Process,quiet!,() -> XXX,,"def quiet!
+      signal(""TSTP"")
+    end"
+Sidekiq::Process,stop!,() -> XXX,,"def stop!
+      signal(""TERM"")
+    end"
+Sidekiq::Process,dump_threads,() -> XXX,,"def dump_threads
+      signal(""TTIN"")
+    end"
+Sidekiq::Process,stopping?,() -> (false or true),,"def stopping?
+      self[""quiet""] == ""true""
+    end"
+Sidekiq::Process,signal,(XXX) -> XXX,,"def signal(sig)
+      key = ""#{identity}-signals""
+      Sidekiq.redis do |c|
+        c.multi do
+          c.lpush(key, sig)
+          c.expire(key, 60)
+        end
+      end
+    end"
+Sidekiq::Workers,each,"() { (XXX, Number, XXX) -> XXX } -> XXX",,"def each
+      Sidekiq.redis do |conn|
+        procs = conn.sscan_each(""processes"").to_a
+        procs.sort.each do |key|
+          valid, workers = conn.pipelined {
+            conn.exists(key)
+            conn.hgetall(""#{key}:workers"")
+          }
+          next unless valid
+          workers.each_pair do |tid, json|
+            hsh = Sidekiq.load_json(json)
+            p = hsh[""payload""]
+            # avoid breaking API, this is a side effect of the JSON optimization in #4316
+            hsh[""payload""] = Sidekiq.load_json(p) if p.is_a?(String)
+            yield key, tid, hsh
+          end
+        end
+      end
+    end"
+Sidekiq::Workers,size,() -> XXX,,"def size
+      Sidekiq.redis do |conn|
+        procs = conn.sscan_each(""processes"").to_a
+        if procs.empty?
+          0
+        else
+          conn.pipelined {
+            procs.each do |key|
+              conn.hget(key, ""busy"")
+            end
+          }.sum(&:to_i)
+        end
+      end
+    end"
+Sidekiq::CLI,parse,"(?XXX) -> [:concurrency, :timeout]",,"def parse(args = ARGV)
+      setup_options(args)
+      initialize_logger
+      validate!
+    end"
+Sidekiq::CLI,jruby?,() -> String,,"def jruby?
+      defined?(::JRUBY_VERSION)
+    end"
+Sidekiq::CLI,launch,(IO) -> XXX,,"def launch(self_read)
+      if environment == ""development"" && $stdout.tty?
+        logger.info ""Starting processing, hit Ctrl-C to stop""
+      end
+
+      @launcher = Sidekiq::Launcher.new(options)
+
+      begin
+        launcher.run
+
+        while (readable_io = IO.select([self_read]))
+          signal = readable_io.first[0].gets.strip
+          handle_signal(signal)
+        end
+      rescue Interrupt
+        logger.info ""Shutting down""
+        launcher.stop
+        logger.info ""Bye!""
+
+        # Explicitly exit so busy Processor threads won't block process shutdown.
+        #
+        # NB: slow at_exit handlers will prevent a timely exit if they take
+        # a while to run. If Sidekiq is getting here but the process isn't exiting,
+        # use the TTIN signal to determine where things are stuck.
+        exit(0)
+      end
+    end"
+Sidekiq::CLI,handle_signal,(XXX) -> XXX,,"def handle_signal(sig)
+      Sidekiq.logger.debug ""Got #{sig} signal""
+      SIGNAL_HANDLERS[sig].call(self)
+    end"
+Sidekiq::CLI,print_banner,() -> nil,,"def print_banner
+      puts ""\e[31m""
+      puts Sidekiq::CLI.banner
+      puts ""\e[0m""
+    end"
+Sidekiq::CLI,set_environment,(String) -> String,,"def set_environment(cli_env)
+      @environment = cli_env || ENV[""RAILS_ENV""] || ENV[""RACK_ENV""] || ""development""
+    end"
+Sidekiq::CLI,symbolize_keys_deep!,"(([ []: ((XXX or XXX)) -> XXX ] and [ []=: ((XXX or XXX), XXX) -> XXX ] and [ delete: (XXX) -> XXX ] and [ keys: () -> XXX ])) -> XXX",,"def symbolize_keys_deep!(hash)
+      hash.keys.each do |k|
+        symkey = k.respond_to?(:to_sym) ? k.to_sym : k
+        hash[symkey] = hash.delete k
+        symbolize_keys_deep! hash[symkey] if hash[symkey].is_a? Hash
+      end
+    end"
+Sidekiq::CLI,setup_options,(XXX) -> XXX,,"def setup_options(args)
+      # parse CLI options
+      opts = parse_options(args)
+
+      set_environment opts[:environment]
+
+      # check config file presence
+      if opts[:config_file]
+        unless File.exist?(opts[:config_file])
+          raise ArgumentError, ""No such file #{opts[:config_file]}""
+        end
+      else
+        config_dir = if File.directory?(opts[:require].to_s)
+          File.join(opts[:require], ""config"")
+        else
+          File.join(options[:require], ""config"")
+        end
+
+        %w[sidekiq.yml sidekiq.yml.erb].each do |config_file|
+          path = File.join(config_dir, config_file)
+          opts[:config_file] ||= path if File.exist?(path)
+        end
+      end
+
+      # parse config file options
+      opts = parse_config(opts[:config_file]).merge(opts) if opts[:config_file]
+
+      # set defaults
+      opts[:queues] = [""default""] if opts[:queues].nil? || opts[:queues].empty?
+      opts[:strict] = true if opts[:strict].nil?
+      opts[:concurrency] = Integer(ENV[""RAILS_MAX_THREADS""]) if opts[:concurrency].nil? && ENV[""RAILS_MAX_THREADS""]
+
+      # merge with defaults
+      options.merge!(opts)
+    end"
+Sidekiq::CLI,options,() -> XXX,,"def options
+      Sidekiq.options
+    end"
+Sidekiq::CLI,validate!,"() -> [:concurrency, :timeout]",,"def validate!
+      if !File.exist?(options[:require]) ||
+          (File.directory?(options[:require]) && !File.exist?(""#{options[:require]}/config/application.rb""))
+        logger.info ""==================================================================""
+        logger.info ""  Please point Sidekiq to a Rails application or a Ruby file  ""
+        logger.info ""  to load your worker classes with -r [DIR|FILE].""
+        logger.info ""==================================================================""
+        logger.info @parser
+        die(1)
+      end
+
+      [:concurrency, :timeout].each do |opt|
+        raise ArgumentError, ""#{opt}: #{options[opt]} is not a valid value"" if options.key?(opt) && options[opt].to_i <= 0
+      end
+    end"
+Sidekiq::CLI,parse_options,"(XXX) -> Hash<(:concurrency or :config_file or :environment or :queues or :require or :strict or :tag or :timeout or :verbose), (Array<XXX> or Number or String or false or true)>",,"def parse_options(argv)
+      opts = {}
+      @parser = option_parser(opts)
+      @parser.parse!(argv)
+      opts
+    end"
+Sidekiq::CLI,option_parser,"(([ []: (:queues) -> XXX ] and [ []=: (:concurrency, Number) -> XXX ] and [ []=: (:config_file, XXX) -> XXX ] and [ []=: (:environment, XXX) -> XXX ] and [ []=: (:queues, Array<XXX>) -> XXX ] and [ []=: (:require, XXX) -> XXX ] and [ []=: (:strict, false) -> XXX ] and [ []=: (:tag, XXX) -> XXX ] and [ []=: (:timeout, Number) -> XXX ] and [ []=: (:verbose, XXX) -> XXX ])) -> OptionParser",,"def option_parser(opts)
+      parser = OptionParser.new { |o|
+        o.on ""-c"", ""--concurrency INT"", ""processor threads to use"" do |arg|
+          opts[:concurrency] = Integer(arg)
+        end
+
+        o.on ""-d"", ""--daemon"", ""Daemonize process"" do |arg|
+          puts ""ERROR: Daemonization mode was removed in Sidekiq 6.0, please use a proper process supervisor to start and manage your services""
+        end
+
+        o.on ""-e"", ""--environment ENV"", ""Application environment"" do |arg|
+          opts[:environment] = arg
+        end
+
+        o.on ""-g"", ""--tag TAG"", ""Process tag for procline"" do |arg|
+          opts[:tag] = arg
+        end
+
+        o.on ""-q"", ""--queue QUEUE[,WEIGHT]"", ""Queues to process with optional weights"" do |arg|
+          queue, weight = arg.split("","")
+          parse_queue opts, queue, weight
+        end
+
+        o.on ""-r"", ""--require [PATH|DIR]"", ""Location of Rails application with workers or file to require"" do |arg|
+          opts[:require] = arg
+        end
+
+        o.on ""-t"", ""--timeout NUM"", ""Shutdown timeout"" do |arg|
+          opts[:timeout] = Integer(arg)
+        end
+
+        o.on ""-v"", ""--verbose"", ""Print more verbose output"" do |arg|
+          opts[:verbose] = arg
+        end
+
+        o.on ""-C"", ""--config PATH"", ""path to YAML config file"" do |arg|
+          opts[:config_file] = arg
+        end
+
+        o.on ""-L"", ""--logfile PATH"", ""path to writable logfile"" do |arg|
+          puts ""ERROR: Logfile redirection was removed in Sidekiq 6.0, Sidekiq will only log to STDOUT""
+        end
+
+        o.on ""-P"", ""--pidfile PATH"", ""path to pidfile"" do |arg|
+          puts ""ERROR: PID file creation was removed in Sidekiq 6.0, please use a proper process supervisor to start and manage your services""
+        end
+
+        o.on ""-V"", ""--version"", ""Print version and exit"" do |arg|
+          puts ""Sidekiq #{Sidekiq::VERSION}""
+          die(0)
+        end
+      }
+
+      parser.banner = ""sidekiq [options]""
+      parser.on_tail ""-h"", ""--help"", ""Show help"" do
+        logger.info parser
+        die 1
+      end
+
+      parser
+    end"
+Sidekiq::CLI,initialize_logger,() -> nil,,"def initialize_logger
+      Sidekiq.logger.level = ::Logger::DEBUG if options[:verbose]
+    end"
+Sidekiq::CLI,parse_queue,"(([ []: (:queues) -> XXX ] and [ []=: (:queues, Array<XXX>) -> XXX ] and [ []=: (:strict, false) -> XXX ]), XXX, ?[ to_i: () -> Number ]) -> nil",,"def parse_queue(opts, queue, weight = nil)
+      opts[:queues] ||= []
+      raise ArgumentError, ""queues: #{queue} cannot be defined twice"" if opts[:queues].include?(queue)
+      [weight.to_i, 1].max.times { opts[:queues] << queue }
+      opts[:strict] = false if weight.to_i > 0
+    end"
+Sidekiq::Client,middleware,() { ((Rake::Task or Sidekiq::Middleware::Chain)) -> XXX } -> (Rake::Task or Sidekiq::Middleware::Chain),,"def middleware(&block)
+      @chain ||= Sidekiq.client_middleware
+      if block_given?
+        @chain = @chain.dup
+        yield @chain
+      end
+      @chain
+    end"
+Sidekiq::Client,initialize,(?((XXX or XXX or XXX))) -> self,,"def initialize(redis_pool = nil)
+      @redis_pool = redis_pool || Thread.current[:sidekiq_via_pool] || Sidekiq.redis_pool
+    end"
+Sidekiq::Client,push,"(([ []: (String) -> XXX ] and [ []=: (String, Number) -> XXX ] and [ []=: (String, String) -> XXX ] and [ delete: (String) -> XXX ] and [ is_a?: (Class) -> XXX ] and [ key?: (String) -> XXX ] and [ merge: (Hash<String, (Number or XXX or XXX)>) -> XXX ])) -> nil",,"def push(item)
+      normed = normalize_item(item)
+      payload = process_single(item[""class""], normed)
+
+      if payload
+        raw_push([payload])
+        payload[""jid""]
+      end
+    end"
+Sidekiq::Client,push_bulk,"(([ []: (String) -> XXX ] and [ []=: (String, Number) -> XXX ] and [ []=: (String, String) -> XXX ] and [ delete: (String) -> XXX ] and [ is_a?: (Class) -> XXX ] and [ key?: (String) -> XXX ] and [ merge: (Hash<String, (Number or XXX or XXX)>) -> XXX ])) -> Array<XXX>",,"def push_bulk(items)
+      arg = items[""args""].first
+      return [] unless arg # no jobs to push
+      raise ArgumentError, ""Bulk arguments must be an Array of Arrays: [[1], [2]]"" unless arg.is_a?(Array)
+
+      at = items.delete(""at"")
+      raise ArgumentError, ""Job 'at' must be a Numeric or an Array of Numeric timestamps"" if at && (Array(at).empty? || !Array(at).all?(Numeric))
+
+      normed = normalize_item(items)
+      payloads = items[""args""].map.with_index { |args, index|
+        copy = normed.merge(""args"" => args, ""jid"" => SecureRandom.hex(12), ""enqueued_at"" => Time.now.to_f)
+        copy[""at""] = (at.is_a?(Array) ? at[index] : at) if at
+
+        result = process_single(items[""class""], copy)
+        result || nil
+      }.compact
+
+      raw_push(payloads) unless payloads.empty?
+      payloads.collect { |payload| payload[""jid""] }
+    end"
+Sidekiq::Client,raw_push,(([ first: () -> XXX ] and [ map: () {(XXX) -> XXX} -> XXX ])) -> true,,"def raw_push(payloads)
+      @redis_pool.with do |conn|
+        conn.multi do
+          atomic_push(conn, payloads)
+        end
+      end
+      true
+    end"
+Sidekiq::Client,atomic_push,"(Redis, ([ first: () -> XXX ] and [ map: () {(XXX) -> XXX} -> XXX ])) -> XXX",,"def atomic_push(conn, payloads)
+      if payloads.first.key?(""at"")
+        conn.zadd(""schedule"", payloads.map { |hash|
+          at = hash.delete(""at"").to_s
+          [at, Sidekiq.dump_json(hash)]
+        })
+      else
+        queue = payloads.first[""queue""]
+        now = Time.now.to_f
+        to_push = payloads.map { |entry|
+          entry[""enqueued_at""] = now
+          Sidekiq.dump_json(entry)
+        }
+        conn.sadd(""queues"", queue)
+        conn.lpush(""queue:#{queue}"", to_push)
+      end
+    end"
+Sidekiq::Client,process_single,"(XXX, [ []: (String) -> XXX ]) -> XXX",,"def process_single(worker_class, item)
+      queue = item[""queue""]
+
+      middleware.invoke(worker_class, item, queue, @redis_pool) do
+        item
+      end
+    end"
+Sidekiq::Client,normalize_item,"(([ []: (String) -> XXX ] and [ []=: (String, Number) -> XXX ] and [ []=: (String, String) -> XXX ] and [ delete: (String) -> XXX ] and [ is_a?: (Class) -> XXX ] and [ key?: (String) -> XXX ] and [ merge: (Hash<String, (Number or XXX or XXX)>) -> XXX ])) -> ([ []: (String) -> XXX ] and [ []=: (String, Number) -> XXX ] and [ []=: (String, String) -> XXX ] and [ delete: (String) -> XXX ] and [ is_a?: (Class) -> XXX ] and [ key?: (String) -> XXX ] and [ merge: (Hash<String, (Number or XXX or XXX)>) -> XXX ])",,"def normalize_item(item)
+      # 6.0.0 push_bulk bug, #4321
+      # TODO Remove after a while...
+      item.delete(""at"") if item.key?(""at"") && item[""at""].nil?
+
+      raise(ArgumentError, ""Job must be a Hash with 'class' and 'args' keys: { 'class' => SomeWorker, 'args' => ['bob', 1, :foo => 'bar'] }"") unless item.is_a?(Hash) && item.key?(""class"") && item.key?(""args"")
+      raise(ArgumentError, ""Job args must be an Array"") unless item[""args""].is_a?(Array)
+      raise(ArgumentError, ""Job class must be either a Class or String representation of the class name"") unless item[""class""].is_a?(Class) || item[""class""].is_a?(String)
+      raise(ArgumentError, ""Job 'at' must be a Numeric timestamp"") if item.key?(""at"") && !item[""at""].is_a?(Numeric)
+      raise(ArgumentError, ""Job tags must be an Array"") if item[""tags""] && !item[""tags""].is_a?(Array)
+      # raise(ArgumentError, ""Arguments must be native JSON types, see https://github.com/mperham/sidekiq/wiki/Best-Practices"") unless JSON.load(JSON.dump(item['args'])) == item['args']
+
+      # merge in the default sidekiq_options for the item's class and/or wrapped element
+      # this allows ActiveJobs to control sidekiq_options too.
+      defaults = normalized_hash(item[""class""])
+      defaults = defaults.merge(item[""wrapped""].get_sidekiq_options) if item[""wrapped""].respond_to?(""get_sidekiq_options"")
+      item = defaults.merge(item)
+
+      item[""class""] = item[""class""].to_s
+      item[""queue""] = item[""queue""].to_s
+      item[""jid""] ||= SecureRandom.hex(12)
+      item[""created_at""] ||= Time.now.to_f
+
+      item
+    end"
+Sidekiq::ExceptionHandler,handle_exception,"([ backtrace: () -> XXX ], ?XXX) -> XXX",,"def handle_exception(ex, ctx = {})
+      Sidekiq.error_handlers.each do |handler|
+        handler.call(ex, ctx)
+      rescue => ex
+        Sidekiq.logger.error ""!!! ERROR HANDLER THREW AN ERROR !!!""
+        Sidekiq.logger.error ex
+        Sidekiq.logger.error ex.backtrace.join(""\n"") unless ex.backtrace.nil?
+      end
+    end"
+Sidekiq::ExceptionHandler::Logger,call,"(([ backtrace: () -> XXX ] and [ message: () -> XXX ]), [ empty?: () -> XXX ]) -> nil",,"def call(ex, ctx)
+        Sidekiq.logger.warn(Sidekiq.dump_json(ctx)) unless ctx.empty?
+        Sidekiq.logger.warn(""#{ex.class.name}: #{ex.message}"")
+        Sidekiq.logger.warn(ex.backtrace.join(""\n"")) unless ex.backtrace.nil?
+      end"
+Sidekiq::BasicFetch,initialize,"({ strict: [ !: () -> XXX ], queues: [ map: () {(XXX) -> XXX} -> XXX ] }) -> self",,"def initialize(options)
+      @strictly_ordered_queues = !!options[:strict]
+      @queues = options[:queues].map { |q| ""queue:#{q}"" }
+      if @strictly_ordered_queues
+        @queues.uniq!
+        @queues << TIMEOUT
+      end
+    end"
+Sidekiq::BasicFetch,retrieve_work,() -> nil,,"def retrieve_work
+      work = Sidekiq.redis { |conn| conn.brpop(*queues_cmd) }
+      UnitOfWork.new(*work) if work
+    end"
+Sidekiq::BasicFetch,queues_cmd,() -> XXX,,"def queues_cmd
+      if @strictly_ordered_queues
+        @queues
+      else
+        queues = @queues.shuffle!.uniq
+        queues << TIMEOUT
+        queues
+      end
+    end"
+Sidekiq::JobLogger,initialize,(?Sidekiq::Logger) -> self,,"def initialize(logger = Sidekiq.logger)
+      @logger = logger
+    end"
+Sidekiq::JobLogger,call,"(XXX, XXX) { () -> XXX } -> XXX",,"def call(item, queue)
+      start = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+      @logger.info(""start"")
+
+      yield
+
+      with_elapsed_time_context(start) do
+        @logger.info(""done"")
+      end
+    rescue Exception
+      with_elapsed_time_context(start) do
+        @logger.info(""fail"")
+      end
+
+      raise
+    end"
+Sidekiq::JobLogger,prepare,([ []: (String) -> XXX ]) { XXX } -> XXX,,"def prepare(job_hash, &block)
+      level = job_hash[""log_level""]
+      if level
+        @logger.log_at(level) do
+          Sidekiq::Context.with(job_hash_context(job_hash), &block)
+        end
+      else
+        Sidekiq::Context.with(job_hash_context(job_hash), &block)
+      end
+    end"
+Sidekiq::JobLogger,job_hash_context,"([ []: (String) -> XXX ]) -> { class: XXX, jid: XXX, bid: XXX, tags: XXX }",,"def job_hash_context(job_hash)
+      # If we're using a wrapper class, like ActiveJob, use the ""wrapped""
+      # attribute to expose the underlying thing.
+      h = {
+        class: job_hash[""wrapped""] || job_hash[""class""],
+        jid: job_hash[""jid""],
+      }
+      h[:bid] = job_hash[""bid""] if job_hash[""bid""]
+      h[:tags] = job_hash[""tags""] if job_hash[""tags""]
+      h
+    end"
+Sidekiq::JobLogger,with_elapsed_time_context,(Number) { XXX } -> XXX,,"def with_elapsed_time_context(start, &block)
+      Sidekiq::Context.with(elapsed_time_context(start), &block)
+    end"
+Sidekiq::JobLogger,elapsed_time_context,(Number) -> { elapsed: String },,"def elapsed_time_context(start)
+      {elapsed: elapsed(start).to_s}
+    end"
+Sidekiq::JobLogger,elapsed,(Number) -> Number,,"def elapsed(start)
+      (::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - start).round(3)
+    end"
+Sidekiq::JobRetry,initialize,(?XXX) -> self,,"def initialize(options = {})
+      @max_retries = Sidekiq.options.merge(options).fetch(:max_retries, DEFAULT_MAX_RETRY_ATTEMPTS)
+    end"
+Sidekiq::JobRetry,global,"(XXX, XXX) { () -> XXX } -> XXX",,"def global(jobstr, queue)
+      yield
+    rescue Handled => ex
+      raise ex
+    rescue Sidekiq::Shutdown => ey
+      # ignore, will be pushed back onto queue during hard_shutdown
+      raise ey
+    rescue Exception => e
+      # ignore, will be pushed back onto queue during hard_shutdown
+      raise Sidekiq::Shutdown if exception_caused_by_shutdown?(e)
+
+      msg = Sidekiq.load_json(jobstr)
+      if msg[""retry""]
+        attempt_retry(nil, msg, queue, e)
+      else
+        Sidekiq.death_handlers.each do |handler|
+          handler.call(msg, e)
+        rescue => handler_ex
+          handle_exception(handler_ex, {context: ""Error calling death handler"", job: msg})
+        end
+      end
+
+      raise Handled
+    end"
+Sidekiq::JobRetry,attempt_retry,"(XXX, XXX, XXX, ([ backtrace: () -> XXX ] and [ message: () -> XXX ])) -> XXX",,"def attempt_retry(worker, msg, queue, exception)
+      max_retry_attempts = retry_attempts_from(msg[""retry""], @max_retries)
+
+      msg[""queue""] = (msg[""retry_queue""] || queue)
+
+      m = exception_message(exception)
+      if m.respond_to?(:scrub!)
+        m.force_encoding(""utf-8"")
+        m.scrub!
+      end
+
+      msg[""error_message""] = m
+      msg[""error_class""] = exception.class.name
+      count = if msg[""retry_count""]
+        msg[""retried_at""] = Time.now.to_f
+        msg[""retry_count""] += 1
+      else
+        msg[""failed_at""] = Time.now.to_f
+        msg[""retry_count""] = 0
+      end
+
+      if msg[""backtrace""]
+        lines = if msg[""backtrace""] == true
+          exception.backtrace
+        else
+          exception.backtrace[0...msg[""backtrace""].to_i]
+        end
+
+        msg[""error_backtrace""] = compress_backtrace(lines)
+      end
+
+      if count < max_retry_attempts
+        delay = delay_for(worker, count, exception)
+        # Logging here can break retries if the logging device raises ENOSPC #3979
+        # logger.debug { ""Failure! Retry #{count} in #{delay} seconds"" }
+        retry_at = Time.now.to_f + delay
+        payload = Sidekiq.dump_json(msg)
+        Sidekiq.redis do |conn|
+          conn.zadd(""retry"", retry_at.to_s, payload)
+        end
+      else
+        # Goodbye dear message, you (re)tried your best I'm sure.
+        retries_exhausted(worker, msg, exception)
+      end
+    end"
+Sidekiq::JobRetry,send_to_morgue,([ []: (String) -> XXX ]) -> true,,"def send_to_morgue(msg)
+      logger.info { ""Adding dead #{msg[""class""]} job #{msg[""jid""]}"" }
+      payload = Sidekiq.dump_json(msg)
+      DeadSet.new.kill(payload, notify_failure: false)
+    end"
+Sidekiq::JobRetry,retry_attempts_from,"([ is_a?: (Class) -> XXX ], [ is_a?: (Class) -> XXX ]) -> [ is_a?: (Class) -> XXX ]",,"def retry_attempts_from(msg_retry, default)
+      if msg_retry.is_a?(Integer)
+        msg_retry
+      else
+        default
+      end
+    end"
+Sidekiq::JobRetry,seconds_to_delay,((Number or OpenSSL::BN)) -> XXX,,"def seconds_to_delay(count)
+      (count**4) + 15 + (rand(30) * (count + 1))
+    end"
+Sidekiq::JobRetry,exception_caused_by_shutdown?,"(([ cause: () -> XXX ] and [ object_id: () -> XXX ]), ?([ <<: (XXX) -> XXX ] and [ include?: (XXX) -> XXX ])) -> false",,"def exception_caused_by_shutdown?(e, checked_causes = [])
+      return false unless e.cause
+
+      # Handle circular causes
+      checked_causes << e.object_id
+      return false if checked_causes.include?(e.cause.object_id)
+
+      e.cause.instance_of?(Sidekiq::Shutdown) ||
+        exception_caused_by_shutdown?(e.cause, checked_causes)
+    end"
+Sidekiq::JobRetry,exception_message,([ message: () -> XXX ]) -> String,,"def exception_message(exception)
+      # App code can stuff all sorts of crazy binary data into the error message
+      # that won't convert to JSON.
+      exception.message.to_s[0, 10_000]
+    rescue
+      +""!!! ERROR MESSAGE THREW AN ERROR !!!""
+    end"
+Sidekiq::JobRetry,compress_backtrace,(XXX) -> String,,"def compress_backtrace(backtrace)
+      serialized = Sidekiq.dump_json(backtrace)
+      compressed = Zlib::Deflate.deflate(serialized)
+      Base64.encode64(compressed)
+    end"
+Sidekiq::Launcher,initialize,(XXX) -> self,,"def initialize(options)
+      @manager = Sidekiq::Manager.new(options)
+      @poller = Sidekiq::Scheduled::Poller.new
+      @done = false
+      @options = options
+    end"
+Sidekiq::Launcher,run,() -> XXX,,"def run
+      @thread = safe_thread(""heartbeat"", &method(:start_heartbeat))
+      @poller.start
+      @manager.start
+    end"
+Sidekiq::Launcher,quiet,() -> XXX,,"def quiet
+      @done = true
+      @manager.quiet
+      @poller.terminate
+    end"
+Sidekiq::Launcher,stop,() -> nil,,"def stop
+      deadline = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC) + @options[:timeout]
+
+      @done = true
+      @manager.quiet
+      @poller.terminate
+
+      @manager.stop(deadline)
+
+      # Requeue everything in case there was a worker who grabbed work while stopped
+      # This call is a no-op in Sidekiq but necessary for Sidekiq Pro.
+      strategy = (@options[:fetch] || Sidekiq::BasicFetch)
+      strategy.bulk_requeue([], @options)
+
+      clear_heartbeat
+    end"
+Sidekiq::Launcher,stopping?,() -> (false or true),,"def stopping?
+      @done
+    end"
+Sidekiq::Launcher,start_heartbeat,() -> XXX,,"def start_heartbeat
+      loop do
+        heartbeat
+        sleep 5
+      end
+      Sidekiq.logger.info(""Heartbeat stopping..."")
+    end"
+Sidekiq::Launcher,clear_heartbeat,() -> nil,,"def clear_heartbeat
+      # Remove record from Redis since we are shutting down.
+      # Note we don't stop the heartbeat thread; if the process
+      # doesn't actually exit, it'll reappear in the Web UI.
+      Sidekiq.redis do |conn|
+        conn.pipelined do
+          conn.srem(""processes"", identity)
+          conn.del(""#{identity}:workers"")
+        end
+      end
+    rescue
+      # best effort, ignore network errors
+    end"
+Sidekiq::Launcher,heartbeat,() -> XXX,,"def heartbeat
+      $0 = PROCTITLES.map { |proc| proc.call(self, to_data) }.compact.join("" "")
+
+      ❤
+    end"
+Sidekiq::Launcher,to_data,"() -> Hash<String, (Number or String or XXX or XXX or XXX or XXX)>",,"def to_data
+      @data ||= begin
+        {
+          ""hostname"" => hostname,
+          ""started_at"" => Time.now.to_f,
+          ""pid"" => ::Process.pid,
+          ""tag"" => @options[:tag] || """",
+          ""concurrency"" => @options[:concurrency],
+          ""queues"" => @options[:queues].uniq,
+          ""labels"" => @options[:labels],
+          ""identity"" => identity,
+        }
+      end
+    end"
+Sidekiq::Launcher,to_json,() -> (XXX or XXX),,"def to_json
+      @json ||= begin
+        # this data changes infrequently so dump it to a string
+        # now so we don't need to dump it every heartbeat.
+        Sidekiq.dump_json(to_data)
+      end
+    end"
+Sidekiq::LoggingUtils,debug?,() -> (false or true),,"def debug?
+      level >= 0
+    end"
+Sidekiq::LoggingUtils,info?,() -> (false or true),,"def info?
+      level >= 1
+    end"
+Sidekiq::LoggingUtils,warn?,() -> (false or true),,"def warn?
+      level >= 2
+    end"
+Sidekiq::LoggingUtils,error?,() -> (false or true),,"def error?
+      level >= 3
+    end"
+Sidekiq::LoggingUtils,fatal?,() -> (false or true),,"def fatal?
+      level >= 4
+    end"
+Sidekiq::LoggingUtils,local_level,() -> XXX,,"def local_level
+      Thread.current[:sidekiq_log_level]
+    end"
+Sidekiq::LoggingUtils,local_level=,([ inspect: () -> XXX ]) -> XXX,,"def local_level=(level)
+      case level
+      when Integer
+        Thread.current[:sidekiq_log_level] = level
+      when Symbol, String
+        Thread.current[:sidekiq_log_level] = LEVELS[level.to_s]
+      when nil
+        Thread.current[:sidekiq_log_level] = nil
+      else
+        raise ArgumentError, ""Invalid log level: #{level.inspect}""
+      end
+    end"
+Sidekiq::LoggingUtils,log_at,([ inspect: () -> XXX ]) { () -> XXX } -> XXX,,"def log_at(level)
+      old_local_level = local_level
+      self.local_level = level
+      yield
+    ensure
+      self.local_level = old_local_level
+    end"
+Sidekiq::Logger::Formatters::Base,tid,() -> Number,,"def tid
+          Thread.current[""sidekiq_tid""] ||= (Thread.current.object_id ^ ::Process.pid).to_s(36)
+        end"
+Sidekiq::Logger::Formatters::Base,ctx,() -> XXX,,"def ctx
+          Sidekiq::Context.current
+        end"
+Sidekiq::Logger::Formatters::Base,format_context,() -> String,,"def format_context
+          if ctx.any?
+            "" "" + ctx.compact.map { |k, v|
+              case v
+              when Array
+                ""#{k}=#{v.join("","")}""
+              else
+                ""#{k}=#{v}""
+              end
+            }.join("" "")
+          end
+        end"
+Sidekiq::Logger::Formatters::Pretty,call,"(XXX, Time, String, XXX) -> String",,"def call(severity, time, program_name, message)
+          ""#{time.utc.iso8601(3)} pid=#{::Process.pid} tid=#{tid}#{format_context} #{severity}: #{message}\n""
+        end"
+Sidekiq::Logger::Formatters::WithoutTimestamp,call,"(XXX, XXX, String, XXX) -> String",,"def call(severity, time, program_name, message)
+          ""pid=#{::Process.pid} tid=#{tid}#{format_context} #{severity}: #{message}\n""
+        end"
+Sidekiq::Logger::Formatters::JSON,call,"(XXX, Time, String, XXX) -> XXX",,"def call(severity, time, program_name, message)
+          hash = {
+            ts: time.utc.iso8601(3),
+            pid: ::Process.pid,
+            tid: tid,
+            lvl: severity,
+            msg: message,
+          }
+          c = ctx
+          hash[""ctx""] = c unless c.empty?
+
+          Sidekiq.dump_json(hash) << ""\n""
+        end"
+Sidekiq::Manager,initialize,"(?Hash<(:concurrency or :fetch), XXX>) -> self",,"def initialize(options = {})
+      logger.debug { options.inspect }
+      @options = options
+      @count = options[:concurrency] || 10
+      raise ArgumentError, ""Concurrency of #{@count} is not supported"" if @count < 1
+
+      @done = false
+      @workers = Set.new
+      @count.times do
+        @workers << Processor.new(self)
+      end
+      @plock = Mutex.new
+    end"
+Sidekiq::Manager,start,() -> XXX,,"def start
+      @workers.each do |x|
+        x.start
+      end
+    end"
+Sidekiq::Manager,quiet,() -> nil,,"def quiet
+      return if @done
+      @done = true
+
+      logger.info { ""Terminating quiet workers"" }
+      @workers.each { |x| x.terminate }
+      fire_event(:quiet, reverse: true)
+    end"
+Sidekiq::Manager,stop,([ -: (Number) -> XXX ]) -> Set<Sidekiq::Processor>,,"def stop(deadline)
+      quiet
+      fire_event(:shutdown, reverse: true)
+
+      # some of the shutdown events can be async,
+      # we don't have any way to know when they're done but
+      # give them a little time to take effect
+      sleep PAUSE_TIME
+      return if @workers.empty?
+
+      logger.info { ""Pausing to allow workers to finish..."" }
+      remaining = deadline - ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+      while remaining > PAUSE_TIME
+        return if @workers.empty?
+        sleep PAUSE_TIME
+        remaining = deadline - ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+      end
+      return if @workers.empty?
+
+      hard_shutdown
+    end"
+Sidekiq::Manager,processor_stopped,(XXX) -> XXX,,"def processor_stopped(processor)
+      @plock.synchronize do
+        @workers.delete(processor)
+      end
+    end"
+Sidekiq::Manager,processor_died,"(XXX, XXX) -> XXX",,"def processor_died(processor, reason)
+      @plock.synchronize do
+        @workers.delete(processor)
+        unless @done
+          p = Processor.new(self)
+          @workers << p
+          p.start
+        end
+      end
+    end"
+Sidekiq::Manager,stopped?,() -> (false or true),,"def stopped?
+      @done
+    end"
+Sidekiq::Manager,hard_shutdown,() -> Set<Sidekiq::Processor>,,"def hard_shutdown
+      # We've reached the timeout and we still have busy workers.
+      # They must die but their jobs shall live on.
+      cleanup = RDL.type_cast(nil, ""Set<Sidekiq::Processor>"", force: true)
+      @plock.synchronize do
+        cleanup = @workers.dup
+      end
+
+      if cleanup.size > 0
+        jobs = cleanup.map { |p| p.job }.compact
+
+        logger.warn { ""Terminating #{cleanup.size} busy worker threads"" }
+        logger.warn { ""Work still in progress #{jobs.inspect}"" }
+
+        # Re-enqueue unfinished jobs
+        # NOTE: You may notice that we may push a job back to redis before
+        # the worker thread is terminated. This is ok because Sidekiq's
+        # contract says that jobs are run AT LEAST once. Process termination
+        # is delayed until we're certain the jobs are back in Redis because
+        # it is worse to lose a job than to run it twice.
+        strategy = (@options[:fetch] || Sidekiq::BasicFetch)
+        strategy.bulk_requeue(jobs, @options)
+      end
+
+      cleanup.each do |processor|
+        processor.kill
+      end
+    end"
+Sidekiq::Monitor::Status,display,(?((String or Symbol))) -> Object,,"def display(section = nil)
+      section ||= ""all""
+      unless VALID_SECTIONS.include? section
+        puts ""I don't know how to check the status of '#{section}'!""
+        puts ""Try one of these: #{VALID_SECTIONS.join("", "")}""
+        return
+      end
+      send(section)
+    rescue => e
+      puts ""Couldn't get status: #{e}""
+    end"
+Sidekiq::Monitor::Status,all,() -> XXX,,"def all
+      version
+      puts
+      overview
+      puts
+      processes
+      puts
+      queues
+    end"
+Sidekiq::Monitor::Status,version,() -> nil,,"def version
+      puts ""Sidekiq #{Sidekiq::VERSION}""
+      puts Time.now.utc
+    end"
+Sidekiq::Monitor::Status,overview,() -> nil,,"def overview
+      puts ""---- Overview ----""
+      puts ""  Processed: #{delimit stats.processed}""
+      puts ""     Failed: #{delimit stats.failed}""
+      puts ""       Busy: #{delimit stats.workers_size}""
+      puts ""   Enqueued: #{delimit stats.enqueued}""
+      puts ""    Retries: #{delimit stats.retry_size}""
+      puts ""  Scheduled: #{delimit stats.scheduled_size}""
+      puts ""       Dead: #{delimit stats.dead_size}""
+    end"
+Sidekiq::Monitor::Status,processes,() -> XXX,,"def processes
+      puts ""---- Processes (#{process_set.size}) ----""
+      process_set.each_with_index do |process, index|
+        puts ""#{process[""identity""]} #{tags_for(process)}""
+        puts ""  Started: #{Time.at(process[""started_at""])} (#{time_ago(process[""started_at""])})""
+        puts ""  Threads: #{process[""concurrency""]} (#{process[""busy""]} busy)""
+        puts ""   Queues: #{split_multiline(process[""queues""].sort, pad: 11)}""
+        puts """" unless (index + 1) == process_set.size
+      end
+    end"
+Sidekiq::Monitor::Status,delimit,([ to_s: () -> String ]) -> String,,"def delimit(number)
+      number.to_s.reverse.scan(/.{1,3}/).join("","").reverse
+    end"
+Sidekiq::Monitor::Status,split_multiline,"([ each: () {(XXX) -> XXX} -> XXX ], ?([ []: (:max_length) -> XXX ] and [ []: (:pad) -> XXX ])) -> String",,"def split_multiline(values, opts = {})
+      return ""none"" unless values
+      pad = opts[:pad] || 0
+      max_length = opts[:max_length] || (80 - pad)
+      out = []
+      line = """"
+      values.each do |value|
+        if (line.length + value.length) > max_length
+          out << line
+          line = "" "" * pad
+        end
+        line << value + "", ""
+      end
+      out << line[0..-3]
+      out.join(""\n"")
+    end"
+Sidekiq::Monitor::Status,tags_for,([ []: (String) -> XXX ]) -> String,,"def tags_for(process)
+      tags = [
+        process[""tag""],
+        process[""labels""],
+        (process[""quiet""] == ""true"" ? ""quiet"" : nil),
+      ].flatten.compact
+      tags.any? ? ""[#{tags.join(""] ["")}]"" : nil
+    end"
+Sidekiq::Monitor::Status,time_ago,(Numeric) -> String,,"def time_ago(timestamp)
+      seconds = Time.now - Time.at(timestamp)
+      return ""just now"" if seconds < 60
+      return ""a minute ago"" if seconds < 120
+      return ""#{seconds.floor / 60} minutes ago"" if seconds < 3600
+      return ""an hour ago"" if seconds < 7200
+      ""#{seconds.floor / 60 / 60} hours ago""
+    end"
+Sidekiq::Monitor::Status,queue_data,() -> (XXX or XXX),,"def queue_data
+      @queue_data ||= Sidekiq::Queue.all.map { |q|
+        QUEUE_STRUCT.new(q.name, q.size.to_s, sprintf(""%#.2f"", q.latency))
+      }
+    end"
+Sidekiq::Monitor::Status,process_set,() -> Sidekiq::ProcessSet,,"def process_set
+      @process_set ||= Sidekiq::ProcessSet.new
+    end"
+Sidekiq::Monitor::Status,stats,() -> Sidekiq::Stats,,"def stats
+      @stats ||= Sidekiq::Stats.new
+    end"
+Sidekiq::Paginator,page,"(XXX, ?([ *: (XXX) -> XXX ] and [ to_i: () -> Number ]), ?XXX, ?{ reverse: XXX }) -> XXX",,"def page(key, pageidx = 1, page_size = 25, opts = nil)
+      current_page = pageidx.to_i < 1 ? 1 : pageidx.to_i
+      pageidx = current_page - 1
+      total_size = 0
+      items = []
+      starting = pageidx * page_size
+      ending = starting + page_size - 1
+
+      Sidekiq.redis do |conn|
+        type = conn.type(key)
+        rev = opts && opts[:reverse]
+
+        case type
+        when ""zset""
+          total_size, items = conn.multi {
+            conn.zcard(key)
+            if rev
+              conn.zrevrange(key, starting, ending, with_scores: true)
+            else
+              conn.zrange(key, starting, ending, with_scores: true)
+            end
+          }
+          [current_page, total_size, items]
+        when ""list""
+          total_size, items = conn.multi {
+            conn.llen(key)
+            if rev
+              conn.lrange(key, -ending - 1, -starting - 1)
+            else
+              conn.lrange(key, starting, ending)
+            end
+          }
+          items.reverse! if rev
+          [current_page, total_size, items]
+        when ""none""
+          [1, 0, []]
+        else
+          raise ""can't page a #{type}""
+        end
+      end
+    end"
+Sidekiq::Processor,initialize,(Sidekiq::Manager) -> self,,"def initialize(mgr)
+      @mgr = mgr
+      @down = false
+      @done = false
+      @job = nil
+      @thread = nil
+      @strategy = (mgr.options[:fetch] || Sidekiq::BasicFetch).new(mgr.options)
+      @reloader = Sidekiq.options[:reloader]
+      @job_logger = (mgr.options[:job_logger] || Sidekiq::JobLogger).new
+      @retrier = Sidekiq::JobRetry.new
+    end"
+Sidekiq::Processor,terminate,(?XXX) -> nil,,"def terminate(wait = false)
+      @done = true
+      return unless @thread
+      @thread.value if wait
+    end"
+Sidekiq::Processor,kill,(?XXX) -> nil,,"def kill(wait = false)
+      @done = true
+      return unless @thread
+      # unlike the other actors, terminate does not wait
+      # for the thread to finish because we don't know how
+      # long the job will take to finish.  Instead we
+      # provide a `kill` method to call after the shutdown
+      # timeout passes.
+      @thread.raise ::Sidekiq::Shutdown
+      @thread.value if wait
+    end"
+Sidekiq::Processor,start,() -> nil,,"def start
+      @thread ||= safe_thread(""processor"", &method(:run))
+    end"
+Sidekiq::Processor,run,() -> XXX,,"def run
+      process_one until @done
+      @mgr.processor_stopped(self)
+    rescue Sidekiq::Shutdown
+      @mgr.processor_stopped(self)
+    rescue Exception => ex
+      @mgr.processor_died(self, ex)
+    end"
+Sidekiq::Processor,process_one,() -> nil,,"def process_one
+      @job = fetch
+      process(@job) if @job
+      @job = nil
+    end"
+Sidekiq::Processor,get_one,() -> nil,,"def get_one
+      work = @strategy.retrieve_work
+      if @down
+        logger.info { ""Redis is online, #{::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - RDL.type_cast(@down, ""Float"")} sec downtime"" }
+        @down = nil
+      end
+      work
+    rescue Sidekiq::Shutdown
+    rescue => ex
+      handle_fetch_exception(ex)
+    end"
+Sidekiq::Processor,fetch,() -> nil,,"def fetch
+      j = get_one
+      if j && @done
+        j.requeue
+        nil
+      else
+        j
+      end
+    end"
+Sidekiq::Processor,handle_fetch_exception,([ backtrace: () -> XXX ]) -> nil,,"def handle_fetch_exception(ex)
+      unless @down
+        @down = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+        logger.error(""Error fetching job: #{ex}"")
+        handle_exception(ex)
+      end
+      sleep(1)
+      nil
+    end"
+Sidekiq::Processor,execute_job,"([ perform: (*XXX) -> XXX ], XXX) -> XXX",,"def execute_job(worker, cloned_args)
+      worker.perform(*cloned_args)
+    end"
+Sidekiq::Processor,stats,"(XXX, XXX) { () -> XXX } -> XXX",,"def stats(jobstr, queue)
+      WORKER_STATE.set(tid, {queue: queue, payload: jobstr, run_at: Time.now.to_i})
+
+      begin
+        yield
+      rescue Exception
+        FAILURE.incr
+        raise
+      ensure
+        WORKER_STATE.delete(tid)
+        PROCESSED.incr
+      end
+    end"
+Sidekiq::Processor,constantize,(XXX) -> Object,,"def constantize(str)
+      return Object.const_get(str) unless str.include?(""::"")
+
+      names = str.split(""::"")
+      names.shift if names.empty? || names.first.empty?
+
+      names.inject(Object) do |constant, name|
+        # the false flag limits search for name to under the constant namespace
+        #   which mimics Rails' behaviour
+        constant.const_get(name, false)
+      end
+    end"
+Sidekiq::Processor::Counter,initialize,() -> self,,"def initialize
+        @value = 0
+        @lock = Mutex.new
+      end"
+Sidekiq::Processor::Counter,incr,(?XXX) -> XXX,,"def incr(amount = 1)
+        @lock.synchronize { @value += amount }
+      end"
+Sidekiq::Processor::Counter,reset,() -> XXX,,"def reset
+        @lock.synchronize {
+          val = @value
+          @value = 0
+          val
+        }
+      end"
+Sidekiq::Processor::SharedWorkerState,initialize,() -> self,,"def initialize
+        @worker_state = {}
+        @lock = Mutex.new
+      end"
+Sidekiq::Processor::SharedWorkerState,set,"(Number, XXX) -> XXX",,"def set(tid, hash)
+        @lock.synchronize { @worker_state[tid] = hash }
+      end"
+Sidekiq::Processor::SharedWorkerState,delete,(Number) -> XXX,,"def delete(tid)
+        @lock.synchronize { @worker_state.delete(tid) }
+      end"
+Sidekiq::Processor::SharedWorkerState,dup,() -> XXX,,"def dup
+        @lock.synchronize { @worker_state.dup }
+      end"
+Sidekiq::Processor::SharedWorkerState,size,() -> XXX,,"def size
+        @lock.synchronize { @worker_state.size }
+      end"
+Sidekiq::Processor::SharedWorkerState,clear,() -> XXX,,"def clear
+        @lock.synchronize { @worker_state.clear }
+      end"
+Sidekiq::Scheduled::Enq,enqueue_jobs,"(?XXX, ?[ each: () {(XXX) -> XXX} -> XXX ]) -> XXX",,"def enqueue_jobs(now = Time.now.to_f.to_s, sorted_sets = SETS)
+        # A job's ""score"" in Redis is the time at which it should be processed.
+        # Just check Redis for the set of jobs with a timestamp before now.
+        Sidekiq.redis do |conn|
+          sorted_sets.each do |sorted_set|
+            # Get next items in the queue with scores (time to execute) <= now.
+            until (jobs = conn.zrangebyscore(sorted_set, ""-inf"", now, limit: [0, 100])).empty?
+              # We need to go through the list one at a time to reduce the risk of something
+              # going wrong between the time jobs are popped from the scheduled queue and when
+              # they are pushed onto a work queue and losing the jobs.
+              jobs.each do |job|
+                # Pop item off the queue and add it to the work queue. If the job can't be popped from
+                # the queue, it's because another process already popped it so we can move on to the
+                # next one.
+                if conn.zrem(sorted_set, job)
+                  Sidekiq::Client.push(Sidekiq.load_json(job))
+                  Sidekiq.logger.debug { ""enqueued #{sorted_set}: #{job}"" }
+                end
+              end
+            end
+          end
+        end
+      end"
+Sidekiq::Scheduled::Poller,initialize,() -> self,,"def initialize
+        @enq = (Sidekiq.options[:scheduled_enq] || Sidekiq::Scheduled::Enq).new
+        @sleeper = ConnectionPool::TimedStack.new
+        @done = false
+        @thread = nil
+      end"
+Sidekiq::Scheduled::Poller,terminate,() -> nil,,"def terminate
+        @done = true
+        if @thread
+          t = @thread
+          @thread = nil
+          @sleeper << 0
+          t.value
+        end
+      end"
+Sidekiq::Scheduled::Poller,start,() -> nil,,"def start
+        @thread ||= safe_thread(""scheduler"") {
+          initial_wait
+
+          until @done
+            enqueue
+            wait
+          end
+          Sidekiq.logger.info(""Scheduler exiting..."")
+        }
+      end"
+Sidekiq::Scheduled::Poller,enqueue,() -> XXX,,"def enqueue
+      RDL.type_cast(@enq, ""Sidekiq::Scheduled::Enq"").enqueue_jobs ## needed because otherwise method with no args is not a subtype of method with optional args
+      rescue => ex
+        # Most likely a problem with redis networking.
+        # Punt and try again at the next interval
+        logger.error ex.message
+        handle_exception(ex)
+      end"
+Sidekiq::Scheduled::Poller,wait,() -> Number,,"def wait
+        @sleeper.pop(random_poll_interval)
+      rescue Timeout::Error
+        # expected
+      rescue => ex
+        # if poll_interval_average hasn't been calculated yet, we can
+        # raise an error trying to reach Redis.
+        logger.error ex.message
+        handle_exception(ex)
+        sleep 5
+      end"
+Sidekiq::Scheduled::Poller,random_poll_interval,() -> XXX,,"def random_poll_interval
+        # We want one Sidekiq process to schedule jobs every N seconds.  We have M processes
+        # and **don't** want to coordinate.
+        #
+        # So in N*M second timespan, we want each process to schedule once.  The basic loop is:
+        #
+        # * sleep a random amount within that N*M timespan
+        # * wake up and schedule
+        #
+        # We want to avoid one edge case: imagine a set of 2 processes, scheduling every 5 seconds,
+        # so N*M = 10.  Each process decides to randomly sleep 8 seconds, now we've failed to meet
+        # that 5 second average. Thankfully each schedule cycle will sleep randomly so the next
+        # iteration could see each process sleep for 1 second, undercutting our average.
+        #
+        # So below 10 processes, we special case and ensure the processes sleep closer to the average.
+        # In the example above, each process should schedule every 10 seconds on average. We special
+        # case smaller clusters to add 50% so they would sleep somewhere between 5 and 15 seconds.
+        # As we run more processes, the scheduling interval average will approach an even spread
+        # between 0 and poll interval so we don't need this artifical boost.
+        #
+        if process_count < 10
+          # For small clusters, calculate a random interval that is ±50% the desired average.
+          poll_interval_average * rand + poll_interval_average.to_f / 2
+        else
+          # With 10+ processes, we should have enough randomness to get decent polling
+          # across the entire timespan
+          poll_interval_average * rand
+        end
+      end"
+Sidekiq::Scheduled::Poller,poll_interval_average,() -> XXX,,"def poll_interval_average
+        Sidekiq.options[:poll_interval_average] ||= scaled_poll_interval
+      end"
+Sidekiq::Scheduled::Poller,scaled_poll_interval,() -> XXX,,"def scaled_poll_interval
+        process_count * Sidekiq.options[:average_scheduled_poll_interval]
+      end"
+Sidekiq::Scheduled::Poller,process_count,() -> Number,,"def process_count
+        pcount = Sidekiq::ProcessSet.new.size
+        pcount = 1 if pcount == 0
+        pcount
+      end"
+Sidekiq::Scheduled::Poller,initial_wait,() -> nil,,"def initial_wait
+        # Have all processes sleep between 5-15 seconds.  10 seconds
+        # to give time for the heartbeat to register (if the poll interval is going to be calculated by the number
+        # of workers), and 5 random seconds to ensure they don't all hit Redis at the same time.
+        total = 0
+        total += INITIAL_WAIT unless Sidekiq.options[:poll_interval_average]
+        total += (5 * rand)
+
+        @sleeper.pop(total)
+      rescue Timeout::Error
+      end"
+Sidekiq::Worker,logger,() -> XXX,,"def logger
+      Sidekiq.logger
+    end"
+Sidekiq::Worker::ClassMethods,execute_job,"([ perform: (*XXX) -> XXX ], XXX) -> XXX",,"def execute_job(worker, args)
+        worker.perform(*args)
+      end"
+Sidekiq::Worker::ClassMethods,delay,(*XXX) -> XXX,,"def delay(*args)
+        raise ArgumentError, ""Do not call .delay on a Sidekiq::Worker class, call .perform_async""
+      end"
+Sidekiq::Worker::ClassMethods,delay_for,(*XXX) -> XXX,,"def delay_for(*args)
+        raise ArgumentError, ""Do not call .delay_for on a Sidekiq::Worker class, call .perform_in""
+      end"
+Sidekiq::Worker::ClassMethods,delay_until,(*XXX) -> XXX,,"def delay_until(*args)
+        raise ArgumentError, ""Do not call .delay_until on a Sidekiq::Worker class, call .perform_at""
+      end"
+Sidekiq::Worker::ClassMethods,set,([ merge!: (XXX) -> XXX ]) -> Sidekiq::Worker::Setter,,"def set(options)
+        Setter.new(self, options)
+      end"
+Sidekiq::Worker::ClassMethods,perform_async,(*XXX) -> XXX,,"def perform_async(*args)
+        client_push(""class"" => self, ""args"" => args)
+      end"
+Sidekiq::Worker::ClassMethods,perform_in,"([ to_f: () -> XXX ], *XXX) -> XXX",,"def perform_in(interval, *args)
+        int = interval.to_f
+        now = Time.now.to_f
+        ts = (int < 1_000_000_000 ? now + int : int)
+
+        item = RDL.type_cast({""class"" => self, ""args"" => args}, ""Hash<String, Array or Class or Integer>"")
+
+        # Optimization to enqueue something now that is scheduled to go out now or in the past
+        item[""at""] = ts if ts > now
+
+        client_push(item)
+      end"
+Sidekiq::Worker::Setter,initialize,"(Sidekiq::Worker::ClassMethods, [ merge!: (XXX) -> XXX ]) -> self",,"def initialize(klass, opts)
+        @klass = klass
+        @opts = opts
+      end"
+Sidekiq::Worker::Setter,set,(XXX) -> Sidekiq::Worker::Setter,,"def set(options)
+        @opts.merge!(options)
+        self
+      end"
+Sidekiq::Util,watchdog,(XXX) { () -> XXX } -> XXX,,"def watchdog(last_words)
+      yield
+    rescue Exception => ex
+      handle_exception(ex, {context: last_words})
+      raise ex
+    end"
+Sidekiq::Util,safe_thread,(String) { XXX } -> XXX,,"def safe_thread(name, &block)
+      Thread.new do
+        Thread.current.name = name
+        watchdog(name, &block)
+      end
+    end"
+Sidekiq::Util,logger,() -> XXX,,"def logger
+      Sidekiq.logger
+    end"
+Sidekiq::Util,redis,() { XXX } -> XXX,,"def redis(&block)
+      Sidekiq.redis(&block)
+    end"
+Sidekiq::Util,tid,() -> Number,,"def tid
+      Thread.current[""sidekiq_tid""] ||= (Thread.current.object_id ^ ::Process.pid).to_s(36)
+    end"
+Sidekiq::Util,hostname,() -> String,,"def hostname
+      ENV[""DYNO""] || Socket.gethostname
+    end"
+Sidekiq::Util,process_nonce,() -> (XXX or XXX),,"def process_nonce
+      @@process_nonce ||= SecureRandom.hex(6)
+    end"
+Sidekiq::Util,identity,() -> String,,"def identity
+      @@identity ||= ""#{hostname}:#{::Process.pid}:#{process_nonce}""
+    end"
+Sidekiq::Util,fire_event,"(XXX, ?([ []: (:reraise) -> XXX ] and [ []: (:reverse) -> XXX ])) -> XXX",,"def fire_event(event, options = {})
+      reverse = options[:reverse]
+      reraise = options[:reraise]
+
+      arr = Sidekiq.options[:lifecycle_events][event]
+      arr.reverse! if reverse
+      arr.each do |block|
+        block.call
+      rescue => ex
+        handle_exception(ex, {context: ""Exception during Sidekiq lifecycle event."", event: event})
+        raise ex if reraise
+      end
+      arr.clear
+    end"
+Sidekiq::Web,settings,() -> [s]Sidekiq::Web,,"def settings
+      self.class.settings
+    end"
+Sidekiq::Web,use,(*XXX) -> XXX,,"def use(*middleware_args, &block)
+      middlewares << [middleware_args, block]
+    end"
+Sidekiq::Web,middlewares,"() -> Array<[Array<XXX>, XXX]>",,"def middlewares
+      @middlewares ||= Web.middlewares.dup
+    end"
+Sidekiq::Web,call,(XXX) -> XXX,,"def call(env)
+      app.call(env)
+    end"
+Sidekiq::Web,app,() -> Sidekiq::Web,,"def app
+      @app ||= build
+    end"
+Sidekiq::Web,enable,(*XXX) -> Array<XXX>,,"def enable(*opts)
+      opts.each { |key| set(key, true) }
+    end"
+Sidekiq::Web,disable,(*XXX) -> Array<XXX>,,"def disable(*opts)
+      opts.each { |key| set(key, false) }
+    end"
+Sidekiq::Web,set,"(XXX, XXX) -> Object",,"def set(attribute, value)
+      send(:""#{attribute}="", value)
+    end"
+Sidekiq::Web,sessions,() -> XXX,,"def sessions
+      unless instance_variable_defined?(""@sessions"")
+        @sessions = self.class.sessions
+        @sessions = @sessions.to_hash.dup if @sessions.respond_to?(:to_hash)
+      end
+
+      @sessions
+    end"
+Sidekiq::Web,build_sessions,() -> nil,,"def build_sessions
+      middlewares = self.middlewares
+
+      unless using?(::Rack::Protection) || ENV[""RACK_ENV""] == ""test""
+        middlewares.unshift [[::Rack::Protection, {use: :authenticity_token}], nil]
+      end
+
+      s = sessions
+      return unless s
+
+      unless using? ::Rack::Session::Cookie
+        unless (secret = Web.session_secret)
+          require ""securerandom""
+          secret = SecureRandom.hex(64)
+        end
+
+        options = {secret: secret}
+        options = options.merge(s.to_hash) if s.respond_to? :to_hash
+
+        middlewares.unshift [[::Rack::Session::Cookie, options], nil]
+      end
+    end"
+Sidekiq::Extensions::ActionMailer,sidekiq_delay,(?XXX) -> Sidekiq::Extensions::Proxy,,"def sidekiq_delay(options = {})
+        Proxy.new(DelayedMailer, self, options)
+      end"
+Sidekiq::Extensions::ActionMailer,sidekiq_delay_for,"([ to_f: () -> XXX ], ?[ merge: (Hash<String, Number>) -> XXX ]) -> Sidekiq::Extensions::Proxy",,"def sidekiq_delay_for(interval, options = {})
+        Proxy.new(DelayedMailer, self, options.merge(""at"" => Time.now.to_f + interval.to_f))
+      end"
+Sidekiq::Extensions::ActionMailer,sidekiq_delay_until,"([ to_f: () -> XXX ], ?[ merge: (Hash<String, XXX>) -> XXX ]) -> Sidekiq::Extensions::Proxy",,"def sidekiq_delay_until(timestamp, options = {})
+        Proxy.new(DelayedMailer, self, options.merge(""at"" => timestamp.to_f))
+      end"
+Sidekiq::Extensions::DelayedModel,perform,(String) -> %any,,"def perform(yml)
+        (target, method_name, args) = YAML.load(yml)
+        target.__send__(method_name, *args)
+      end"
+Sidekiq::Extensions::ActiveRecord,sidekiq_delay,(?XXX) -> Sidekiq::Extensions::Proxy,,"def sidekiq_delay(options = {})
+        Proxy.new(DelayedModel, self, options)
+      end"
+Sidekiq::Extensions::ActiveRecord,sidekiq_delay_for,"([ to_f: () -> XXX ], ?[ merge: (Hash<String, Number>) -> XXX ]) -> Sidekiq::Extensions::Proxy",,"def sidekiq_delay_for(interval, options = {})
+        Proxy.new(DelayedModel, self, options.merge(""at"" => Time.now.to_f + interval.to_f))
+      end"
+Sidekiq::Extensions::ActiveRecord,sidekiq_delay_until,"([ to_f: () -> XXX ], ?[ merge: (Hash<String, XXX>) -> XXX ]) -> Sidekiq::Extensions::Proxy",,"def sidekiq_delay_until(timestamp, options = {})
+        Proxy.new(DelayedModel, self, options.merge(""at"" => timestamp.to_f))
+      end"
+Sidekiq::Extensions::DelayedClass,perform,(String) -> %any,,"def perform(yml)
+        (target, method_name, args) = YAML.load(yml)
+        target.__send__(method_name, *args)
+      end"
+Sidekiq::Extensions::Klass,sidekiq_delay,(?XXX) -> Sidekiq::Extensions::Proxy,,"def sidekiq_delay(options = {})
+        Proxy.new(DelayedClass, self, options)
+      end"
+Sidekiq::Extensions::Klass,sidekiq_delay_for,"([ to_f: () -> XXX ], ?[ merge: (Hash<String, Number>) -> XXX ]) -> Sidekiq::Extensions::Proxy",,"def sidekiq_delay_for(interval, options = {})
+        Proxy.new(DelayedClass, self, options.merge(""at"" => Time.now.to_f + interval.to_f))
+      end"
+Sidekiq::Extensions::Klass,sidekiq_delay_until,"([ to_f: () -> XXX ], ?[ merge: (Hash<String, XXX>) -> XXX ]) -> Sidekiq::Extensions::Proxy",,"def sidekiq_delay_until(timestamp, options = {})
+        Proxy.new(DelayedClass, self, options.merge(""at"" => timestamp.to_f))
+      end"
+Sidekiq::Middleware::Chain,initialize_copy,"([ instance_variable_set: (:@entries, XXX) -> XXX ]) -> XXX",,"def initialize_copy(copy)
+        copy.instance_variable_set(:@entries, entries.dup)
+      end"
+Sidekiq::Middleware::Chain,each,() { XXX } -> XXX,,"def each(&block)
+        entries.each(&block)
+      end"
+Sidekiq::Middleware::Chain,initialize,() { (Sidekiq::Middleware::Chain) -> XXX } -> self,,"def initialize
+        @entries = nil
+        yield self if block_given?
+      end"
+Sidekiq::Middleware::Chain,entries,() -> Array<Sidekiq::Middleware::Entry>,,"def entries
+        @entries ||= []
+      end"
+Sidekiq::Middleware::Chain,remove,(XXX) -> XXX,,"def remove(klass)
+        entries.delete_if { |entry| entry.klass == klass }
+      end"
+Sidekiq::Middleware::Chain,add,"([ new: (*XXX) -> XXX ], *XXX) -> XXX",,"def add(klass, *args)
+        remove(klass) if exists?(klass)
+        entries << Entry.new(klass, *args)
+      end"
+Sidekiq::Middleware::Chain,prepend,"([ new: (*XXX) -> XXX ], *XXX) -> XXX",,"def prepend(klass, *args)
+        remove(klass) if exists?(klass)
+        entries.insert(0, Entry.new(klass, *args))
+      end"
+Sidekiq::Middleware::Chain,insert_before,"(XXX, [ new: (*XXX) -> XXX ], *XXX) -> XXX",,"def insert_before(oldklass, newklass, *args)
+        i = entries.index { |entry| entry.klass == newklass }
+        new_entry = i.nil? ? Entry.new(newklass, *args) : entries.delete_at(i)
+        i = entries.index { |entry| entry.klass == oldklass } || 0
+        entries.insert(i, new_entry)
+      end"
+Sidekiq::Middleware::Chain,insert_after,"(XXX, [ new: (*XXX) -> XXX ], *XXX) -> XXX",,"def insert_after(oldklass, newklass, *args)
+        i = entries.index { |entry| entry.klass == newklass }
+        new_entry = i.nil? ? Entry.new(newklass, *args) : entries.delete_at(i)
+        i = entries.index { |entry| entry.klass == oldklass } || entries.count - 1
+        entries.insert(i + 1, new_entry)
+      end"
+Sidekiq::Middleware::Chain,exists?,(XXX) -> (false or true),,"def exists?(klass)
+        any? { |entry| entry.klass == klass }
+      end"
+Sidekiq::Middleware::Chain,empty?,() -> (false or true),,"def empty?
+        @entries.nil? || @entries.empty?
+      end"
+Sidekiq::Middleware::Chain,retrieve,() -> Enumerator<t>,,"def retrieve
+        map(&:make_new)
+      end"
+Sidekiq::Middleware::Chain,clear,() -> XXX,,"def clear
+        entries.clear
+      end"
+Sidekiq::Middleware::Entry,initialize,"([ new: (*XXX) -> XXX ], *XXX) -> self",,"def initialize(klass, *args)
+        @klass = klass
+        @args = args
+      end"
+Sidekiq::Middleware::Entry,make_new,() -> XXX,,"def make_new
+        @klass.new(*@args)
+      end"
+Sidekiq::Middleware::I18n::Client,call,"(XXX, ([ []: (String) -> XXX ] and [ []=: (String, XXX) -> XXX ]), XXX, XXX) { () -> XXX } -> XXX",,"def call(_worker, msg, _queue, _redis)
+      msg[""locale""] ||= I18n.locale
+      yield
+    end"
+Sidekiq::Middleware::I18n::Server,call,"(XXX, [ fetch: (String, XXX) -> XXX ], XXX) { XXX } -> XXX",,"def call(_worker, msg, _queue, &block)
+      I18n.with_locale(msg.fetch(""locale"", I18n.default_locale), &block)
+    end"
+Sidekiq::WebAction,settings,() -> [s]Sidekiq::Web,,"def settings
+      Web.settings
+    end"
+Sidekiq::WebAction,request,() -> Rack::Request,,"def request
+      @request ||= ::Rack::Request.new(env)
+    end"
+Sidekiq::WebAction,halt,(XXX) -> XXX,,"def halt(res)
+      throw :halt, res
+    end"
+Sidekiq::WebAction,redirect,(XXX) -> XXX,,"def redirect(location)
+      throw :halt, [302, {""Location"" => ""#{request.base_url}#{location}""}, []]
+    end"
+Sidekiq::WebAction,params,"() -> Hash<%any, %any>",,"def params
+      indifferent_hash = Hash.new { |hash, key| hash[key.to_s] if Symbol === key }
+
+      indifferent_hash.merge! request.params
+      route_params.each { |k, v| indifferent_hash[k.to_s] = v }
+
+      indifferent_hash
+    end"
+Sidekiq::WebAction,route_params,() -> XXX,,"def route_params
+      env[WebRouter::ROUTE_PARAMS]
+    end"
+Sidekiq::WebAction,session,() -> XXX,,"def session
+      env[RACK_SESSION]
+    end"
+Sidekiq::WebAction,erb,"([ is_a?: (Class) -> XXX ], ?[ []: (:locals) -> XXX ]) -> Object",,"def erb(content, options = {})
+      if content.is_a? Symbol
+        unless respond_to?(:""_erb_#{content}"")
+          src = ERB.new(File.read(""#{Web.settings.views}/#{content}.erb"")).src
+          WebAction.class_eval <<-RUBY, __FILE__, __LINE__ + 1
+            def _erb_#{content}
+              #{src}
+            end
+          RUBY
+        end
+      end
+
+      if @_erb
+        _erb(content, options[:locals])
+      else
+        @_erb = true
+        content = _erb(content, options[:locals])
+
+        _render { content }
+      end
+    end"
+Sidekiq::WebAction,render,"([ !=: (:erb) -> XXX ], [ is_a?: (Class) -> XXX ], ?[ []: (:locals) -> XXX ]) -> Object",,"def render(engine, content, options = {})
+      raise ""Only erb templates are supported"" if engine != :erb
+
+      erb(content, options)
+    end"
+Sidekiq::WebAction,json,"(XXX) -> [Number, Hash<String, String>, [XXX]]",,"def json(payload)
+      [200, {""Content-Type"" => ""application/json"", ""Cache-Control"" => ""no-cache""}, [Sidekiq.dump_json(payload)]]
+    end"
+Sidekiq::WebAction,initialize,"(([ []: (String) -> XXX ] and [ []=: (String, XXX) -> XXX ]), XXX) -> self",,"def initialize(env, block)
+      @_erb = false
+      @env = env
+      @block = block
+      @files ||= {}
+    end"
+Sidekiq::WebAction,_erb,"([ is_a?: (Class) -> XXX ], [ each: () {(XXX, XXX) -> XXX} -> XXX ]) -> Object",,"def _erb(file, locals)
+      locals&.each { |k, v| define_singleton_method(k) { v } unless singleton_methods.include? k }
+
+      if file.is_a?(String)
+        ERB.new(file).result(binding)
+      else
+        send(:""_erb_#{file}"")
+      end
+    end"
+Sidekiq::WebApplication,initialize,((Sidekiq::Web or Sidekiq::WebAction or Sidekiq::WebApplication)) -> self,,"def initialize(klass)
+      @klass = klass
+    end"
+Sidekiq::WebApplication,settings,() -> XXX,,"def settings
+      @klass.settings
+    end"
+Sidekiq::WebApplication,call,"(([ []: (String) -> XXX ] and [ []=: (String, XXX) -> XXX ])) -> Array<(Array<String> or Hash<String, String> or Number)>",,"def call(env)
+      action = self.class.match(env)
+      return [404, {""Content-Type"" => ""text/plain"", ""X-Cascade"" => ""pass""}, [""Not Found""]] unless action
+
+      app = @klass
+      resp = catch(:halt) do # rubocop:disable Standard/SemanticBlocks
+        self.class.run_befores(app, action)
+        action.instance_exec env, &action.block
+      ensure
+        self.class.run_afters(app, action)
+      end
+
+      resp = RDL.type_cast(case resp
+      when Array
+        resp
+      else
+        headers = {
+          ""Content-Type"" => ""text/html"",
+          ""Cache-Control"" => ""no-cache"",
+          ""Content-Language"" => action.locale,
+          ""Content-Security-Policy"" => CSP_HEADER,
+        }
+
+        [200, headers, [resp]]
+      end, ""[Integer, Hash<String, String>, Array<String>]"")
+
+      resp[1] = resp[1].dup
+
+      RDL.type_cast(resp[1], ""Hash<String, String>"")[CONTENT_LENGTH] = RDL.type_cast(resp[2], ""Array<String>"").sum(&:bytesize).to_s
+
+      resp
+    end"
+Sidekiq::WebRouter,get,(XXX) { XXX } -> nil,,"def get(path, &block)
+      route(GET, path, &block)
+    end"
+Sidekiq::WebRouter,post,(XXX) { XXX } -> nil,,"def post(path, &block)
+      route(POST, path, &block)
+    end"
+Sidekiq::WebRouter,put,(XXX) { XXX } -> nil,,"def put(path, &block)
+      route(PUT, path, &block)
+    end"
+Sidekiq::WebRouter,patch,(XXX) { XXX } -> nil,,"def patch(path, &block)
+      route(PATCH, path, &block)
+    end"
+Sidekiq::WebRouter,delete,(XXX) { XXX } -> nil,,"def delete(path, &block)
+      route(DELETE, path, &block)
+    end"
+Sidekiq::WebRouter,route,"([ ==: (String) -> XXX ], XXX) { XXX } -> nil",,"def route(method, path, &block)
+      @routes ||= {GET => [], POST => [], PUT => [], PATCH => [], DELETE => [], HEAD => []}
+
+      @routes[method] << WebRoute.new(method, path, block)
+      @routes[HEAD] << WebRoute.new(method, path, block) if method == GET
+    end"
+Sidekiq::WebRouter,match,"(([ []: (String) -> XXX ] and [ []=: (String, XXX) -> XXX ])) -> Sidekiq::WebAction",,"def match(env)
+      request_method = env[REQUEST_METHOD]
+      path_info = ::Rack::Utils.unescape env[PATH_INFO]
+
+      # There are servers which send an empty string when requesting the root.
+      # These servers should be ashamed of themselves.
+      path_info = ""/"" if path_info == """"
+
+      @routes[request_method].each do |route|
+        params = route.match(request_method, path_info)
+        if params
+          env[ROUTE_PARAMS] = params
+
+          return WebAction.new(env, route.block)
+        end
+      end
+
+      nil
+    end"
+Sidekiq::WebRoute,initialize,"([ ==: (String) -> XXX ], XXX, XXX) -> self",,"def initialize(request_method, pattern, block)
+      @request_method = request_method
+      @pattern = pattern
+      @block = block
+    end"
+Sidekiq::WebRoute,matcher,() -> Regexp,,"def matcher
+      @matcher ||= compile
+    end"
+Sidekiq::WebRoute,compile,() -> Regexp,,"def compile
+      if pattern.match?(NAMED_SEGMENTS_PATTERN)
+        p = pattern.gsub(NAMED_SEGMENTS_PATTERN, '/\1(?<\2>[^$/]+)')
+
+        Regexp.new(""\\A#{p}\\Z"")
+      else
+        pattern
+      end
+    end"
+Sidekiq::WebRoute,match,"(XXX, ([ ==: (XXX) -> XXX ] and [ match: (XXX) -> XXX ])) -> (Hash or Hash<XXX, XXX>)",,"def match(request_method, path)
+      case matcher
+      when String
+        {} if path == matcher
+      else
+        path_match = path.match(matcher)
+        if path_match
+          Hash[path_match.names.map(&:to_sym).zip(path_match.captures)]
+        end
+      end
+    end"
+[s]Sidekiq::Queue,all,() -> XXX,,"def self.all
+      Sidekiq.redis { |c| c.sscan_each(""queues"").to_a }.sort.map { |q| Sidekiq::Queue.new(q) }
+    end"
+[s]Sidekiq::DeadSet,max_jobs,() -> XXX,,"def self.max_jobs
+      Sidekiq.options[:dead_max_jobs]
+    end"
+[s]Sidekiq::DeadSet,timeout,() -> XXX,,"def self.timeout
+      Sidekiq.options[:dead_timeout_in_seconds]
+    end"
+[s]Sidekiq::CLI,w,() -> String,,"def self.w
+      ""\e[37m""
+    end"
+[s]Sidekiq::CLI,r,() -> String,,"def self.r
+      ""\e[31m""
+    end"
+[s]Sidekiq::CLI,b,() -> String,,"def self.b
+      ""\e[30m""
+    end"
+[s]Sidekiq::CLI,reset,() -> String,,"def self.reset
+      ""\e[0m""
+    end"
+[s]Sidekiq::CLI,banner,() -> String,,"def self.banner
+      %{
+      #{w}         m,
+      #{w}         `$b
+      #{w}    .ss,  $$:         .,d$
+      #{w}    `$$P,d$P'    .,md$P""'
+      #{w}     ,$$$$$b#{b}/#{w}md$$$P^'
+      #{w}   .d$$$$$$#{b}/#{w}$$$P'
+      #{w}   $$^' `""#{b}/#{w}$$$'       #{r}____  _     _      _    _
+      #{w}   $:     ,$$:      #{r} / ___|(_) __| | ___| | _(_) __ _
+      #{w}   `b     :$$       #{r} \\___ \\| |/ _` |/ _ \\ |/ / |/ _` |
+      #{w}          $$:        #{r} ___) | | (_| |  __/   <| | (_| |
+      #{w}          $$         #{r}|____/|_|\\__,_|\\___|_|\\_\\_|\\__, |
+      #{w}        .d$$          #{r}                             |_|
+      #{reset}}
+    end"
+[s]Sidekiq::Client,via,([ nil?: () -> XXX ]) { () -> XXX } -> XXX,,"def self.via(pool)
+      raise ArgumentError, ""No pool given"" if pool.nil?
+      current_sidekiq_pool = Thread.current[:sidekiq_via_pool]
+      Thread.current[:sidekiq_via_pool] = pool
+      yield
+    ensure
+      Thread.current[:sidekiq_via_pool] = current_sidekiq_pool
+    end"
+[s]Sidekiq::Client,push,"(([ []: (String) -> XXX ] and [ []=: (String, Number) -> XXX ] and [ []=: (String, String) -> XXX ] and [ delete: (String) -> XXX ] and [ is_a?: (Class) -> XXX ] and [ key?: (String) -> XXX ] and [ merge: (Hash<String, (Number or XXX or XXX)>) -> XXX ])) -> nil",,"def push(item)
+        new.push(item)
+      end"
+[s]Sidekiq::Client,push_bulk,"(([ []: (String) -> XXX ] and [ []=: (String, Number) -> XXX ] and [ []=: (String, String) -> XXX ] and [ delete: (String) -> XXX ] and [ is_a?: (Class) -> XXX ] and [ key?: (String) -> XXX ] and [ merge: (Hash<String, (Number or XXX or XXX)>) -> XXX ])) -> Array<XXX>",,"def push_bulk(items)
+        new.push_bulk(items)
+      end"
+[s]Sidekiq::Client,enqueue_in,"(XXX, (Sidekiq::Worker::ClassMethods or Sidekiq::Worker::Setter), *XXX) -> XXX",,"def enqueue_in(interval, klass, *args)
+        klass.perform_in(interval, *args)
+      end"
+[s]Sidekiq::BasicFetch,bulk_requeue,"(([ each: () {(XXX) -> XXX} -> XXX ] and [ empty?: () -> XXX ] and [ size: () -> XXX ]), XXX) -> nil",,"def self.bulk_requeue(inprogress, options)
+      return if inprogress.empty?
+
+      Sidekiq.logger.debug { ""Re-queueing terminated jobs"" }
+      jobs_to_requeue = {}
+      inprogress.each do |unit_of_work|
+        jobs_to_requeue[unit_of_work.queue] ||= []
+        jobs_to_requeue[unit_of_work.queue] << unit_of_work.job
+      end
+
+      Sidekiq.redis do |conn|
+        conn.pipelined do
+          jobs_to_requeue.each do |queue, jobs|
+            conn.rpush(queue, jobs)
+          end
+        end
+      end
+      Sidekiq.logger.info(""Pushed #{inprogress.size} jobs back to Redis"")
+    rescue => ex
+      Sidekiq.logger.warn(""Failed to requeue #{inprogress.size} jobs: #{ex.message}"")
+    end"
+[s]Sidekiq::Context,with,([ each_key: () {(XXX) -> XXX} -> XXX ]) { () -> XXX } -> XXX,,"def self.with(hash)
+      current.merge!(hash)
+      yield
+    ensure
+      hash.each_key { |key| current.delete(key) }
+    end"
+[s]Sidekiq::Context,current,() -> XXX,,"def self.current
+      Thread.current[:sidekiq_context] ||= {}
+    end"
+[s]Sidekiq::RedisConnection,create,"(?([ []: (:pool_timeout) -> XXX ] and [ []: (:size) -> XXX ] and [ []: (:url) -> XXX ] and [ []=: (XXX, XXX) -> XXX ] and [ delete: (XXX) -> XXX ] and [ dup: () -> XXX ] and [ key?: (:id) -> XXX ] and [ keys: () -> XXX ])) -> ConnectionPool",,"def create(options = {})
+        options.keys.each do |key|
+          options[key.to_sym] = options.delete(key)
+        end
+
+        options[:id] = ""Sidekiq-#{Sidekiq.server? ? ""server"" : ""client""}-PID-#{::Process.pid}"" unless options.key?(:id)
+        options[:url] ||= determine_redis_provider
+
+        size = if options[:size]
+          options[:size]
+        elsif Sidekiq.server?
+          # Give ourselves plenty of connections.  pool is lazy
+          # so we won't create them until we need them.
+          Sidekiq.options[:concurrency] + 5
+        elsif ENV[""RAILS_MAX_THREADS""]
+          Integer(ENV[""RAILS_MAX_THREADS""])
+        else
+          5
+        end
+
+        verify_sizing(size, Sidekiq.options[:concurrency]) if Sidekiq.server?
+
+        pool_timeout = options[:pool_timeout] || 1
+        log_info(options)
+
+        ConnectionPool.new(timeout: pool_timeout, size: size) do
+          build_client(options)
+        end
+      end"
+[s]Sidekiq::RedisConnection,verify_sizing,"([ <: (XXX) -> XXX ], [ +: (Number) -> XXX ]) -> nil",,"def verify_sizing(size, concurrency)
+        raise ArgumentError, ""Your Redis connection pool is too small for Sidekiq to work. Your pool has #{size} connections but must have at least #{concurrency + 2}"" if size < (concurrency + 2)
+      end"
+[s]Sidekiq::RedisConnection,client_opts,([ dup: () -> XXX ]) -> XXX,,"def client_opts(options)
+        opts = options.dup
+        if opts[:namespace]
+          opts.delete(:namespace)
+        end
+
+        if opts[:network_timeout]
+          opts[:timeout] = opts[:network_timeout]
+          opts.delete(:network_timeout)
+        end
+
+        opts[:driver] ||= Redis::Connection.drivers.last || ""ruby""
+
+        # Issue #3303, redis-rb will silently retry an operation.
+        # This can lead to duplicate jobs if Sidekiq::Client's LPUSH
+        # is performed twice but I believe this is much, much rarer
+        # than the reconnect silently fixing a problem; we keep it
+        # on by default.
+        opts[:reconnect_attempts] ||= 1
+
+        opts
+      end"
+[s]Sidekiq::RedisConnection,log_info,([ dup: () -> XXX ]) -> XXX,,"def log_info(options)
+        # Don't log Redis AUTH password
+        redacted = ""REDACTED""
+        scrubbed_options = options.dup
+        if scrubbed_options[:url] && (uri = URI.parse(scrubbed_options[:url])) && uri.password
+          uri.password = redacted
+          scrubbed_options[:url] = uri.to_s
+        end
+        if scrubbed_options[:password]
+          scrubbed_options[:password] = redacted
+        end
+        RDL.type_cast(scrubbed_options[:sentinels], ""Array<Hash<Symbol, String>>"")&.each do |sentinel|
+          sentinel[:password] = redacted if sentinel[:password]
+        end
+        if Sidekiq.server?
+          Sidekiq.logger.info(""Booting Sidekiq #{Sidekiq::VERSION} with redis options #{scrubbed_options}"")
+        else
+          Sidekiq.logger.debug(""#{Sidekiq::NAME} client with redis options #{scrubbed_options}"")
+        end
+      end"
+[s]Sidekiq::RedisConnection,determine_redis_provider,() -> String,,"def determine_redis_provider
+        # If you have this in your environment:
+        # MY_REDIS_URL=redis://hostname.example.com:1238/4
+        # then set:
+        # REDIS_PROVIDER=MY_REDIS_URL
+        # and Sidekiq will find your custom URL variable with no custom
+        # initialization code at all.
+        #
+        p = ENV[""REDIS_PROVIDER""]
+        if p && p =~ /\:/
+          raise <<~EOM
+            REDIS_PROVIDER should be set to the name of the variable which contains the Redis URL, not a URL itself.
+            Platforms like Heroku will sell addons that publish a *_URL variable.  You need to tell Sidekiq with REDIS_PROVIDER, e.g.:
+
+            REDISTOGO_URL=redis://somehost.example.com:6379/4
+            REDIS_PROVIDER=REDISTOGO_URL
+          EOM
+        end
+
+        ENV[
+          p || ""REDIS_URL""
+        ]
+      end"
+[s]Sidekiq::Testing,__set_test_mode,(XXX) { () -> XXX } -> XXX,,"def __set_test_mode(mode)
+        if block_given?
+          current_mode = __test_mode
+          begin
+            self.__test_mode = mode
+            yield
+          ensure
+            self.__test_mode = current_mode
+          end
+        else
+          self.__test_mode = mode
+        end
+      end"
+[s]Sidekiq::Testing,disable!,() { XXX } -> XXX,,"def disable!(&block)
+        __set_test_mode(:disable, &block)
+      end"
+[s]Sidekiq::Testing,fake!,() { XXX } -> XXX,,"def fake!(&block)
+        __set_test_mode(:fake, &block)
+      end"
+[s]Sidekiq::Testing,inline!,() { XXX } -> XXX,,"def inline!(&block)
+        __set_test_mode(:inline, &block)
+      end"
+[s]Sidekiq::Testing,enabled?,() -> (false or true),,"def enabled?
+        __test_mode != :disable
+      end"
+[s]Sidekiq::Testing,disabled?,() -> (false or true),,"def disabled?
+        __test_mode == :disable
+      end"
+[s]Sidekiq::Testing,fake?,() -> (false or true),,"def fake?
+        __test_mode == :fake
+      end"
+[s]Sidekiq::Testing,inline?,() -> (false or true),,"def inline?
+        __test_mode == :inline
+      end"
+[s]Sidekiq::Testing,server_middleware,() { (Sidekiq::Middleware::Chain) -> XXX } -> Sidekiq::Middleware::Chain,,"def server_middleware
+        @server_chain ||= Middleware::Chain.new
+        yield @server_chain if block_given?
+        @server_chain
+      end"
+[s]Sidekiq::Testing,constantize,([ split: (String) -> XXX ]) -> XXX,,"def constantize(str)
+        names = str.split(""::"")
+        names.shift if names.empty? || names.first.empty?
+
+        names.inject(Object) do |constant, name|
+          constant.const_defined?(name) ? constant.const_get(name) : constant.const_missing(name)
+        end
+      end"
+[s]Sidekiq::Queues,[],(XXX) -> XXX,,"def [](queue)
+        jobs_by_queue[queue]
+      end"
+[s]Sidekiq::Queues,push,"(XXX, XXX, XXX) -> XXX",,"def push(queue, klass, job)
+        jobs_by_queue[queue] << job
+        jobs_by_worker[klass] << job
+      end"
+[s]Sidekiq::Queues,jobs_by_queue,"() -> Hash<String, Array<Sidekiq::Job>>",,"def jobs_by_queue
+        @jobs_by_queue ||= RDL.type_cast(Hash.new { |hash, key| hash[key] = [] }, ""Hash<String, Array<Sidekiq::Job>>"")
+      end"
+[s]Sidekiq::Queues,jobs_by_worker,"() -> Hash<String, Array<Sidekiq::Job>>",,"def jobs_by_worker
+        @jobs_by_worker ||= RDL.type_cast(Hash.new { |hash, key| hash[key] = [] }, ""Hash<String, Array<Sidekiq::Job>>"")
+      end"
+[s]Sidekiq::Queues,delete_for,"(Number, [ to_s: () -> String ], XXX) -> XXX",,"def delete_for(jid, queue, klass)
+        jobs_by_queue[queue.to_s].delete_if { |job| job[""jid""] == jid }
+        jobs_by_worker[klass].delete_if { |job| job[""jid""] == jid }
+      end"
+[s]Sidekiq::Queues,clear_for,"(XXX, XXX) -> XXX",,"def clear_for(queue, klass)
+        jobs_by_queue[queue].clear
+        jobs_by_worker[klass].clear
+      end"
+[s]Sidekiq::Queues,clear_all,() -> XXX,,"def clear_all
+        jobs_by_queue.clear
+        jobs_by_worker.clear
+      end"
+[s]Sidekiq::Worker,jobs,() -> Array<Sidekiq::Job>,,"def jobs # :nodoc:
+        RDL.type_cast(Queues.jobs_by_queue.values.flatten, ""Array<Sidekiq::Job>"")
+      end"
+[s]Sidekiq::Worker,clear_all,() -> XXX,,"def clear_all
+        Queues.clear_all
+      end"
+[s]Sidekiq::Worker,drain_all,() -> nil,,"def drain_all
+        while jobs.any?
+          worker_classes = jobs.map { |job| job[""class""] }.uniq
+
+          worker_classes.each do |worker_class|
+            Sidekiq::Testing.constantize(worker_class).drain
+          end
+        end
+      end"
+[s]Sidekiq::Worker,included,(Module) -> XXX,,"def self.included(base)
+      raise ArgumentError, ""Sidekiq::Worker cannot be included in an ActiveJob: #{base.name}"" if base.ancestors.any? { |c| c.name == ""ActiveJob::Base"" }
+
+      base.include(Options)
+      base.extend(ClassMethods)
+    end"
+[s]Sidekiq::Web,settings,() -> [s]Sidekiq::Web,,"def settings
+        self
+      end"
+[s]Sidekiq::Web,middlewares,"() -> Array<[Array<XXX>, XXX]>",,"def middlewares
+        @middlewares ||= []
+      end"
+[s]Sidekiq::Web,use,(*XXX) -> XXX,,"def use(*middleware_args, &block)
+        middlewares << [middleware_args, block]
+      end"
+[s]Sidekiq::Web,default_tabs,() -> { String: String },,"def default_tabs
+        DEFAULT_TABS
+      end"
+[s]Sidekiq::Web,custom_tabs,"() -> Hash<XXX, XXX>",,"def custom_tabs
+        @custom_tabs ||= {}
+      end"
+[s]Sidekiq::Web,locales,() -> [String],,"def locales
+        @locales ||= LOCALES
+      end"
+[s]Sidekiq::Web,views,() -> String,,"def views
+        @views ||= VIEWS
+      end"
+[s]Sidekiq::Web,enable,(*XXX) -> Array<XXX>,,"def enable(*opts)
+        opts.each { |key| set(key, true) }
+      end"
+[s]Sidekiq::Web,disable,(*XXX) -> Array<XXX>,,"def disable(*opts)
+        opts.each { |key| set(key, false) }
+      end"
+[s]Sidekiq::Web,set,"(XXX, XXX) -> Object",,"def set(attribute, value)
+        send(:""#{attribute}="", value)
+      end"
+[s]Sidekiq::Web,call,(XXX) -> XXX,,"def self.call(env)
+      @app ||= new
+      @app.call(env)
+    end"
+[s]Sidekiq::WebApplication,settings,() -> [s]Sidekiq::Web,,"def self.settings
+      Sidekiq::Web.settings
+    end"
+[s]Sidekiq::WebApplication,tabs,() -> XXX,,"def self.tabs
+      Sidekiq::Web.tabs
+    end"
+[s]Sidekiq::WebApplication,set,"(XXX, XXX) -> nil",,"def self.set(key, val)
+      # nothing, backwards compatibility
+    end"
+[s]Sidekiq::WebApplication,helpers,(?XXX) { XXX } -> XXX,,"def self.helpers(mod = nil, &block)
+      if block_given?
+        WebAction.class_eval(&block)
+      else
+        WebAction.send(:include, mod)
+      end
+    end"
+[s]Sidekiq::WebApplication,before,(?((Rake::FileList or String))) -> XXX,,"def self.before(path = nil, &block)
+      befores << [path && Regexp.new(""\\A#{path.gsub(""*"", "".*"")}\\z""), block]
+    end"
+[s]Sidekiq::WebApplication,after,(?((Rake::FileList or String))) -> XXX,,"def self.after(path = nil, &block)
+      afters << [path && Regexp.new(""\\A#{path.gsub(""*"", "".*"")}\\z""), block]
+    end"
+[s]Sidekiq::WebApplication,run_befores,"(XXX, XXX) -> XXX",,"def self.run_befores(app, action)
+      run_hooks(befores, app, action)
+    end"
+[s]Sidekiq::WebApplication,run_afters,"(XXX, XXX) -> XXX",,"def self.run_afters(app, action)
+      run_hooks(afters, app, action)
+    end"
+[s]Sidekiq::WebApplication,befores,"() -> Array<[(Regexp or XXX), XXX]>",,"def self.befores
+      @befores ||= []
+    end"
+[s]Sidekiq::WebApplication,afters,"() -> Array<[(Regexp or XXX), XXX]>",,"def self.afters
+      @afters ||= []
+    end"

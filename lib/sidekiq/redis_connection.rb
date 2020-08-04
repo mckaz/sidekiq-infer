@@ -103,7 +103,7 @@ module Sidekiq
         if scrubbed_options[:password]
           scrubbed_options[:password] = redacted
         end
-        scrubbed_options[:sentinels]&.each do |sentinel|
+        RDL.type_cast(scrubbed_options[:sentinels], "Array<Hash<Symbol, String>>")&.each do |sentinel|
           sentinel[:password] = redacted if sentinel[:password]
         end
         if Sidekiq.server?

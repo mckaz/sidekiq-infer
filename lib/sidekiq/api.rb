@@ -1,3 +1,4 @@
+# coding: utf-8
 # frozen_string_literal: true
 
 require "sidekiq"
@@ -111,7 +112,7 @@ module Sidekiq
 
     def reset(*stats)
       all = %w[failed processed]
-      stats = stats.empty? ? all : all & stats.flatten.compact.map(&:to_s)
+      stats = stats.empty? ? all : all & RDL.type_cast(stats.flatten, "Array<Integer>").compact.map(&:to_s)
 
       mset_args = []
       stats.each do |stat|
