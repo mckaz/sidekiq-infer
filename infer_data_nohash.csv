@@ -1,4 +1,4 @@
-Class,Method/Variable,Inferred Type,Original Type,Source Code,Comments
+Class,Method,Inferred Type,Original Type,Source Code,Comments
 Sidekiq::Stats,initialize,() -> self,,"def initialize
       fetch_stats!
     end"
@@ -32,7 +32,6 @@ Sidekiq::Stats,default_queue_latency,() -> XXX,,"def default_queue_latency
 Sidekiq::Stats,queues,() -> XXX,,"def queues
       Sidekiq::Stats::Queues.new.lengths
     end"
-Sidekiq::Stats,@stats,"{ processed: Number, failed: Number, scheduled_size: XXX, retry_size: XXX, dead_size: XXX, processes_size: XXX, default_queue_latency: Number, workers_size: XXX, enqueued: XXX }",,
 Sidekiq::Stats,fetch_stats!,"() -> { processed: Number, failed: Number, scheduled_size: XXX, retry_size: XXX, dead_size: XXX, processes_size: XXX, default_queue_latency: Number, workers_size: XXX, enqueued: XXX }",,"def fetch_stats!
       pipe1_res = Sidekiq.redis { |conn|
         conn.pipelined do
@@ -120,17 +119,13 @@ Sidekiq::Stats::Queues,lengths,() -> XXX,,"def lengths
           Hash[array_of_arrays]
         end
       end"
-Sidekiq::Stats::History,@days_previous,XXX,,
-Sidekiq::Stats::History,@start_date,(XXX or XXX),,
 Sidekiq::Stats::History,initialize,"(XXX, ?((XXX or XXX))) -> self",,"def initialize(days_previous, start_date = nil)
         @days_previous = days_previous
         @start_date = start_date || Time.now.utc.to_date
       end"
-Sidekiq::Stats::History,@processed,"Hash<XXX, Number>",,
 Sidekiq::Stats::History,processed,"() -> Hash<XXX, Number>",,"def processed
         @processed ||= date_stat_hash(""processed"")
       end"
-Sidekiq::Stats::History,@failed,"Hash<XXX, Number>",,
 Sidekiq::Stats::History,failed,"() -> Hash<XXX, Number>",,"def failed
         @failed ||= date_stat_hash(""failed"")
       end"
@@ -155,9 +150,7 @@ Sidekiq::Stats::History,date_stat_hash,"(XXX) -> Hash<XXX, Number>",,"def date_s
 
         stat_hash
       end"
-Sidekiq::Queue,@name,String,,
-Sidekiq::Queue,@rname,String,,
-Sidekiq::Queue,initialize,(?[ to_s: () -> String ]) -> self,,"def initialize(name = ""default"")
+Sidekiq::Queue,initialize,(?String) -> self,,"def initialize(name = ""default"")
       @name = name.to_s
       @rname = ""queue:#{name}""
     end"
@@ -197,7 +190,7 @@ Sidekiq::Queue,each,() { (Sidekiq::Job) -> XXX } -> XXX,,"def each
         deleted_size = initial_size - size
       end
     end"
-Sidekiq::Queue,find_job,(XXX) -> XXX,,"def find_job(jid)
+Sidekiq::Queue,find_job,(Number) -> XXX,,"def find_job(jid)
       detect { |j| j.jid == jid }
     end"
 Sidekiq::Queue,clear,() -> XXX,,"def clear
@@ -208,17 +201,12 @@ Sidekiq::Queue,clear,() -> XXX,,"def clear
         end
       end
     end"
-Sidekiq::Job,@args,Array<(String or XXX)>,,
-Sidekiq::Job,@value,"(Hash<XXX, XXX> or XXX or XXX)",,
-Sidekiq::Job,@item,(XXX or XXX),,
-Sidekiq::Job,@queue,(XXX or XXX),,
-Sidekiq::Job,initialize,"((Hash<XXX, XXX> and [ is_a?: (Class) -> XXX ]), ?((XXX or XXX))) -> self",,"def initialize(item, queue_name = nil)
+Sidekiq::Job,initialize,"((Hash<XXX, XXX> and [ is_a?: (Class) -> XXX ]), ?String) -> self",,"def initialize(item, queue_name = nil)
       @args = nil
       @value = item
       @item = item.is_a?(Hash) ? item : parse(item)
       @queue = queue_name || @item[""queue""]
     end"
-Sidekiq::Job,@invalid,true,,
 Sidekiq::Job,parse,"([ []: (String) -> XXX ]) -> Hash<String, XXX>",,"def parse(item)
       Sidekiq.load_json(item)
     rescue JSON::ParserError
@@ -232,7 +220,6 @@ Sidekiq::Job,parse,"([ []: (String) -> XXX ]) -> Hash<String, XXX>",,"def parse(
 Sidekiq::Job,klass,() -> nil,,"def klass
       self[""class""]
     end"
-Sidekiq::Job,@klass,nil,,
 Sidekiq::Job,display_class,() -> nil,,"def display_class
       # Unwrap known wrappers so they show up in a human-friendly manner in the Web UI
       @klass ||= case klass
@@ -252,7 +239,6 @@ Sidekiq::Job,display_class,() -> nil,,"def display_class
                    klass
       end
     end"
-Sidekiq::Job,@display_args,Array<XXX>,,
 Sidekiq::Job,display_args,() -> Array<XXX>,,"def display_args
       # Unwrap known wrappers so they show up in a human-friendly manner in the Web UI
       @display_args ||= case klass
@@ -282,7 +268,7 @@ Sidekiq::Job,display_args,() -> Array<XXX>,,"def display_args
 Sidekiq::Job,args,() -> Array<(String or XXX)>,,"def args
       @args || @item[""args""]
     end"
-Sidekiq::Job,jid,() -> nil,,"def jid
+Sidekiq::Job,jid,() -> Number,,"def jid
       self[""jid""]
     end"
 Sidekiq::Job,enqueued_at,() -> Time,,"def enqueued_at
@@ -294,7 +280,6 @@ Sidekiq::Job,created_at,() -> Time,,"def created_at
 Sidekiq::Job,tags,() -> Array<XXX>,,"def tags
       self[""tags""] || []
     end"
-Sidekiq::Job,@error_backtrace,XXX,,
 Sidekiq::Job,error_backtrace,() -> Object,,"def error_backtrace
       # Cache nil values
       if defined?(@error_backtrace)
@@ -314,7 +299,7 @@ Sidekiq::Job,delete,() -> XXX,,"def delete
       }
       count != 0
     end"
-Sidekiq::Job,[],(XXX) -> nil,,"def [](name)
+Sidekiq::Job,[],(String) -> nil,,"def [](name)
       # nil will happen if the JSON fails to parse.
       # We don't guarantee Sidekiq will work with bad job JSON but we should
       # make a best effort to minimize the damage.
@@ -336,9 +321,7 @@ Sidekiq::Job,uncompress_backtrace,(String) -> Object,,"def uncompress_backtrace(
         end
       end
     end"
-Sidekiq::SortedEntry,@score,XXX,,
-Sidekiq::SortedEntry,@parent,Sidekiq::JobSet,,
-Sidekiq::SortedEntry,initialize,"((Sidekiq::JobSet and [ name: () -> XXX ]), XXX, (Hash<XXX, XXX> and [ is_a?: (Class) -> XXX ])) -> self",,"def initialize(parent, score, item)
+Sidekiq::SortedEntry,initialize,"(Sidekiq::JobSet, XXX, (Hash<XXX, XXX> and [ is_a?: (Class) -> XXX ])) -> self",,"def initialize(parent, score, item)
       super(item)
       @score = score
       @parent = parent
@@ -346,7 +329,6 @@ Sidekiq::SortedEntry,initialize,"((Sidekiq::JobSet and [ name: () -> XXX ]), XXX
 Sidekiq::SortedEntry,at,() -> Time,,"def at
       Time.at(score).utc
     end"
-Sidekiq::SortedEntry,@value,XXX,,
 Sidekiq::SortedEntry,delete,() -> XXX,,"def delete
       if @value
         @parent.delete_by_value(@parent.name, @value)
@@ -354,7 +336,6 @@ Sidekiq::SortedEntry,delete,() -> XXX,,"def delete
         @parent.delete_by_jid(score, jid)
       end
     end"
-Sidekiq::SortedEntry,@item,XXX,,
 Sidekiq::SortedEntry,reschedule,([ to_f: () -> XXX ]) -> XXX,,"def reschedule(at)
       Sidekiq.redis do |conn|
         conn.zincrby(@parent.name, at.to_f - @score, Sidekiq.dump_json(@item))
@@ -378,7 +359,7 @@ Sidekiq::SortedEntry,kill,() -> XXX,,"def kill
         DeadSet.new.kill(message)
       end
     end"
-Sidekiq::SortedEntry,error?,() -> XXX,,"def error?
+Sidekiq::SortedEntry,error?,() -> (false or true),,"def error?
       !!item[""error_class""]
     end"
 Sidekiq::SortedEntry,remove_job,() { (XXX) -> XXX } -> XXX,,"def remove_job
@@ -414,8 +395,6 @@ Sidekiq::SortedEntry,remove_job,() { (XXX) -> XXX } -> XXX,,"def remove_job
         end
       end
     end"
-Sidekiq::SortedSet,@name,String,,
-Sidekiq::SortedSet,@_size,XXX,,
 Sidekiq::SortedSet,initialize,(String) -> self,,"def initialize(name)
       @name = name
       @_size = size
@@ -433,7 +412,6 @@ Sidekiq::JobSet,schedule,"([ to_f: () -> XXX ], XXX) -> XXX",,"def schedule(time
         conn.zadd(name, timestamp.to_f.to_s, Sidekiq.dump_json(message))
       end
     end"
-Sidekiq::JobSet,@_size,XXX,,
 Sidekiq::JobSet,each,() { (Sidekiq::SortedEntry) -> XXX } -> XXX,,"def each
       initial_size = @_size
       offset_size = 0
@@ -454,7 +432,7 @@ Sidekiq::JobSet,each,() { (Sidekiq::SortedEntry) -> XXX } -> XXX,,"def each
         offset_size = initial_size - @_size
       end
     end"
-Sidekiq::JobSet,fetch,"(([ first: () -> XXX ] and [ is_a?: (Class) -> XXX ] and [ last: () -> XXX ]), ?[ nil?: () -> XXX ]) -> XXX",,"def fetch(score, jid = nil)
+Sidekiq::JobSet,fetch,"((Array or Enumerator::ArithmeticSequence or Rake::FileList or Range), ?Number) -> XXX",,"def fetch(score, jid = nil)
       begin_score, end_score =
         if score.is_a?(Range)
           [score.first, score.last]
@@ -472,7 +450,7 @@ Sidekiq::JobSet,fetch,"(([ first: () -> XXX ] and [ is_a?: (Class) -> XXX ] and 
         result << entry if jid.nil? || entry.jid == jid
       end
     end"
-Sidekiq::JobSet,find_job,(XXX) -> Sidekiq::SortedEntry,,"def find_job(jid)
+Sidekiq::JobSet,find_job,(Number) -> Sidekiq::SortedEntry,,"def find_job(jid)
       Sidekiq.redis do |conn|
         conn.zscan_each(name, match: ""*#{jid}*"", count: 100) do |entry, score|
           job = JSON.parse(entry)
@@ -482,7 +460,7 @@ Sidekiq::JobSet,find_job,(XXX) -> Sidekiq::SortedEntry,,"def find_job(jid)
       end
       nil
     end"
-Sidekiq::JobSet,delete_by_value,"(XXX, XXX) -> XXX",,"def delete_by_value(name, value)
+Sidekiq::JobSet,delete_by_value,"(String, XXX) -> XXX",,"def delete_by_value(name, value)
       Sidekiq.redis do |conn|
         ret = conn.zrem(name, value)
         @_size -= 1 if ret
@@ -568,7 +546,6 @@ Sidekiq::ProcessSet,each,() { (Sidekiq::Process) -> XXX } -> XXX,,"def each
 Sidekiq::ProcessSet,size,() -> XXX,,"def size
       Sidekiq.redis { |conn| conn.scard(""processes"") }
     end"
-Sidekiq::ProcessSet,@leader,String,,
 Sidekiq::ProcessSet,leader,() -> String,,"def leader
       @leader ||= begin
         x = Sidekiq.redis { |c| c.get(""dear-leader"") }
@@ -577,7 +554,6 @@ Sidekiq::ProcessSet,leader,() -> String,,"def leader
         x
       end
     end"
-Sidekiq::Process,@attribs,[ []: (XXX) -> XXX ],,
 Sidekiq::Process,initialize,([ []: (XXX) -> XXX ]) -> self,,"def initialize(hash)
       @attribs = hash
     end"
@@ -602,7 +578,7 @@ Sidekiq::Process,stop!,() -> XXX,,"def stop!
 Sidekiq::Process,dump_threads,() -> XXX,,"def dump_threads
       signal(""TTIN"")
     end"
-Sidekiq::Process,stopping?,() -> XXX,,"def stopping?
+Sidekiq::Process,stopping?,() -> (false or true),,"def stopping?
       self[""quiet""] == ""true""
     end"
 Sidekiq::Process,signal,(XXX) -> XXX,,"def signal(sig)
@@ -614,7 +590,7 @@ Sidekiq::Process,signal,(XXX) -> XXX,,"def signal(sig)
         end
       end
     end"
-Sidekiq::Workers,each,"() { (XXX, XXX, XXX) -> XXX } -> XXX",,"def each
+Sidekiq::Workers,each,"() { (XXX, Number, XXX) -> XXX } -> XXX",,"def each
       Sidekiq.redis do |conn|
         procs = conn.sscan_each(""processes"").to_a
         procs.sort.each do |key|
@@ -655,7 +631,6 @@ Sidekiq::CLI,parse,"(?XXX) -> [:concurrency, :timeout]",,"def parse(args = ARGV)
 Sidekiq::CLI,jruby?,() -> String,,"def jruby?
       defined?(::JRUBY_VERSION)
     end"
-Sidekiq::CLI,@launcher,Sidekiq::Launcher,,
 Sidekiq::CLI,launch,(IO) -> XXX,,"def launch(self_read)
       if environment == ""development"" && $stdout.tty?
         logger.info ""Starting processing, hit Ctrl-C to stop""
@@ -692,7 +667,6 @@ Sidekiq::CLI,print_banner,() -> nil,,"def print_banner
       puts Sidekiq::CLI.banner
       puts ""\e[0m""
     end"
-Sidekiq::CLI,@environment,String,,
 Sidekiq::CLI,set_environment,(String) -> String,,"def set_environment(cli_env)
       @environment = cli_env || ENV[""RAILS_ENV""] || ENV[""RACK_ENV""] || ""development""
     end"
@@ -741,7 +715,6 @@ Sidekiq::CLI,setup_options,(XXX) -> XXX,,"def setup_options(args)
 Sidekiq::CLI,options,() -> XXX,,"def options
       Sidekiq.options
     end"
-Sidekiq::CLI,@parser,OptionParser,,
 Sidekiq::CLI,validate!,"() -> [:concurrency, :timeout]",,"def validate!
       if !File.exist?(options[:require]) ||
           (File.directory?(options[:require]) && !File.exist?(""#{options[:require]}/config/application.rb""))
@@ -833,8 +806,7 @@ Sidekiq::CLI,parse_queue,"(([ []: (:queues) -> XXX ] and [ []=: (:queues, Array<
       [weight.to_i, 1].max.times { opts[:queues] << queue }
       opts[:strict] = false if weight.to_i > 0
     end"
-Sidekiq::Client,@chain,(XXX or XXX),,
-Sidekiq::Client,middleware,() { ((XXX or XXX)) -> XXX } -> (XXX or XXX),,"def middleware(&block)
+Sidekiq::Client,middleware,() { ((Rake::Task or Sidekiq::Middleware::Chain)) -> XXX } -> (Rake::Task or Sidekiq::Middleware::Chain),,"def middleware(&block)
       @chain ||= Sidekiq.client_middleware
       if block_given?
         @chain = @chain.dup
@@ -842,7 +814,6 @@ Sidekiq::Client,middleware,() { ((XXX or XXX)) -> XXX } -> (XXX or XXX),,"def mi
       end
       @chain
     end"
-Sidekiq::Client,@redis_pool,(XXX or XXX or XXX),,
 Sidekiq::Client,initialize,(?((XXX or XXX or XXX))) -> self,,"def initialize(redis_pool = nil)
       @redis_pool = redis_pool || Thread.current[:sidekiq_via_pool] || Sidekiq.redis_pool
     end"
@@ -883,7 +854,7 @@ Sidekiq::Client,raw_push,(([ first: () -> XXX ] and [ map: () {(XXX) -> XXX} -> 
       end
       true
     end"
-Sidekiq::Client,atomic_push,"(([ lpush: (String, XXX) -> XXX ] and [ sadd: (String, XXX) -> XXX ] and [ zadd: (String, XXX) -> XXX ]), ([ first: () -> XXX ] and [ map: () {(XXX) -> XXX} -> XXX ])) -> XXX",,"def atomic_push(conn, payloads)
+Sidekiq::Client,atomic_push,"(Redis, ([ first: () -> XXX ] and [ map: () {(XXX) -> XXX} -> XXX ])) -> XXX",,"def atomic_push(conn, payloads)
       if payloads.first.key?(""at"")
         conn.zadd(""schedule"", payloads.map { |hash|
           at = hash.delete(""at"").to_s
@@ -946,8 +917,6 @@ Sidekiq::ExceptionHandler::Logger,call,"(([ backtrace: () -> XXX ] and [ message
         Sidekiq.logger.warn(""#{ex.class.name}: #{ex.message}"")
         Sidekiq.logger.warn(ex.backtrace.join(""\n"")) unless ex.backtrace.nil?
       end"
-Sidekiq::BasicFetch,@strictly_ordered_queues,XXX,,
-Sidekiq::BasicFetch,@queues,XXX,,
 Sidekiq::BasicFetch,initialize,(([ []: (:queues) -> XXX ] and [ []: (:strict) -> XXX ])) -> self,,"def initialize(options)
       @strictly_ordered_queues = !!options[:strict]
       @queues = options[:queues].map { |q| ""queue:#{q}"" }
@@ -969,8 +938,7 @@ Sidekiq::BasicFetch,queues_cmd,() -> XXX,,"def queues_cmd
         queues
       end
     end"
-Sidekiq::JobLogger,@logger,([ info: (String) -> XXX ] and [ log_at: (XXX) {() -> XXX} -> XXX ]),,
-Sidekiq::JobLogger,initialize,(?([ info: (String) -> XXX ] and [ log_at: (XXX) {() -> XXX} -> XXX ])) -> self,,"def initialize(logger = Sidekiq.logger)
+Sidekiq::JobLogger,initialize,(?Sidekiq::Logger) -> self,,"def initialize(logger = Sidekiq.logger)
       @logger = logger
     end"
 Sidekiq::JobLogger,call,"(XXX, XXX) { () -> XXX } -> XXX",,"def call(item, queue)
@@ -1019,7 +987,6 @@ Sidekiq::JobLogger,elapsed_time_context,(Number) -> { elapsed: String },,"def el
 Sidekiq::JobLogger,elapsed,(Number) -> Number,,"def elapsed(start)
       (::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - start).round(3)
     end"
-Sidekiq::JobRetry,@max_retries,XXX,,
 Sidekiq::JobRetry,initialize,(?XXX) -> self,,"def initialize(options = {})
       @max_retries = Sidekiq.options.merge(options).fetch(:max_retries, DEFAULT_MAX_RETRY_ATTEMPTS)
     end"
@@ -1104,7 +1071,7 @@ Sidekiq::JobRetry,retry_attempts_from,"([ is_a?: (Class) -> XXX ], [ is_a?: (Cla
         default
       end
     end"
-Sidekiq::JobRetry,seconds_to_delay,(([ **: (Number) -> XXX ] and [ +: (Number) -> XXX ])) -> XXX,,"def seconds_to_delay(count)
+Sidekiq::JobRetry,seconds_to_delay,((Number or OpenSSL::BN)) -> XXX,,"def seconds_to_delay(count)
       (count**4) + 15 + (rand(30) * (count + 1))
     end"
 Sidekiq::JobRetry,exception_caused_by_shutdown?,"(([ cause: () -> XXX ] and [ object_id: () -> XXX ]), ?([ <<: (XXX) -> XXX ] and [ include?: (XXX) -> XXX ])) -> false",,"def exception_caused_by_shutdown?(e, checked_causes = [])
@@ -1129,17 +1096,12 @@ Sidekiq::JobRetry,compress_backtrace,(XXX) -> String,,"def compress_backtrace(ba
       compressed = Zlib::Deflate.deflate(serialized)
       Base64.encode64(compressed)
     end"
-Sidekiq::Launcher,@manager,Sidekiq::Manager,,
-Sidekiq::Launcher,@poller,Sidekiq::Scheduled::Poller,,
-Sidekiq::Launcher,@done,(false or true),,
-Sidekiq::Launcher,@options,([ []: (:concurrency) -> XXX ] and [ []: (:fetch) -> XXX ] and [ []: (:labels) -> XXX ] and [ []: (:queues) -> XXX ] and [ []: (:tag) -> XXX ] and [ []: (:timeout) -> XXX ] and [ inspect: () -> XXX ]),,
 Sidekiq::Launcher,initialize,(([ []: (:concurrency) -> XXX ] and [ []: (:fetch) -> XXX ] and [ []: (:labels) -> XXX ] and [ []: (:queues) -> XXX ] and [ []: (:tag) -> XXX ] and [ []: (:timeout) -> XXX ] and [ inspect: () -> XXX ])) -> self,,"def initialize(options)
       @manager = Sidekiq::Manager.new(options)
       @poller = Sidekiq::Scheduled::Poller.new
       @done = false
       @options = options
     end"
-Sidekiq::Launcher,@thread,XXX,,
 Sidekiq::Launcher,run,() -> XXX,,"def run
       @thread = safe_thread(""heartbeat"", &method(:start_heartbeat))
       @poller.start
@@ -1194,7 +1156,6 @@ Sidekiq::Launcher,heartbeat,() -> XXX,,"def heartbeat
 
       ❤
     end"
-Sidekiq::Launcher,@data,"Hash<String, (Number or String or XXX or XXX or XXX or XXX)>",,
 Sidekiq::Launcher,to_data,"() -> Hash<String, (Number or String or XXX or XXX or XXX or XXX)>",,"def to_data
       @data ||= begin
         {
@@ -1209,7 +1170,6 @@ Sidekiq::Launcher,to_data,"() -> Hash<String, (Number or String or XXX or XXX or
         }
       end
     end"
-Sidekiq::Launcher,@json,(XXX or XXX),,
 Sidekiq::Launcher,to_json,() -> (XXX or XXX),,"def to_json
       @json ||= begin
         # this data changes infrequently so dump it to a string
@@ -1217,19 +1177,19 @@ Sidekiq::Launcher,to_json,() -> (XXX or XXX),,"def to_json
         Sidekiq.dump_json(to_data)
       end
     end"
-Sidekiq::LoggingUtils,debug?,() -> XXX,,"def debug?
+Sidekiq::LoggingUtils,debug?,() -> (false or true),,"def debug?
       level >= 0
     end"
-Sidekiq::LoggingUtils,info?,() -> XXX,,"def info?
+Sidekiq::LoggingUtils,info?,() -> (false or true),,"def info?
       level >= 1
     end"
-Sidekiq::LoggingUtils,warn?,() -> XXX,,"def warn?
+Sidekiq::LoggingUtils,warn?,() -> (false or true),,"def warn?
       level >= 2
     end"
-Sidekiq::LoggingUtils,error?,() -> XXX,,"def error?
+Sidekiq::LoggingUtils,error?,() -> (false or true),,"def error?
       level >= 3
     end"
-Sidekiq::LoggingUtils,fatal?,() -> XXX,,"def fatal?
+Sidekiq::LoggingUtils,fatal?,() -> (false or true),,"def fatal?
       level >= 4
     end"
 Sidekiq::LoggingUtils,local_level,() -> XXX,,"def local_level
@@ -1254,7 +1214,7 @@ Sidekiq::LoggingUtils,log_at,([ inspect: () -> XXX ]) { () -> XXX } -> XXX,,"def
     ensure
       self.local_level = old_local_level
     end"
-Sidekiq::Logger::Formatters::Base,tid,() -> XXX,,"def tid
+Sidekiq::Logger::Formatters::Base,tid,() -> Number,,"def tid
           Thread.current[""sidekiq_tid""] ||= (Thread.current.object_id ^ ::Process.pid).to_s(36)
         end"
 Sidekiq::Logger::Formatters::Base,ctx,() -> XXX,,"def ctx
@@ -1272,13 +1232,13 @@ Sidekiq::Logger::Formatters::Base,format_context,() -> String,,"def format_conte
             }.join("" "")
           end
         end"
-Sidekiq::Logger::Formatters::Pretty,call,"(XXX, [ utc: () -> XXX ], XXX, XXX) -> String",,"def call(severity, time, program_name, message)
+Sidekiq::Logger::Formatters::Pretty,call,"(XXX, Time, String, XXX) -> String",,"def call(severity, time, program_name, message)
           ""#{time.utc.iso8601(3)} pid=#{::Process.pid} tid=#{tid}#{format_context} #{severity}: #{message}\n""
         end"
-Sidekiq::Logger::Formatters::WithoutTimestamp,call,"(XXX, XXX, XXX, XXX) -> String",,"def call(severity, time, program_name, message)
+Sidekiq::Logger::Formatters::WithoutTimestamp,call,"(XXX, XXX, String, XXX) -> String",,"def call(severity, time, program_name, message)
           ""pid=#{::Process.pid} tid=#{tid}#{format_context} #{severity}: #{message}\n""
         end"
-Sidekiq::Logger::Formatters::JSON,call,"(XXX, [ utc: () -> XXX ], XXX, XXX) -> XXX",,"def call(severity, time, program_name, message)
+Sidekiq::Logger::Formatters::JSON,call,"(XXX, Time, String, XXX) -> XXX",,"def call(severity, time, program_name, message)
           hash = {
             ts: time.utc.iso8601(3),
             pid: ::Process.pid,
@@ -1291,11 +1251,6 @@ Sidekiq::Logger::Formatters::JSON,call,"(XXX, [ utc: () -> XXX ], XXX, XXX) -> X
 
           Sidekiq.dump_json(hash) << ""\n""
         end"
-Sidekiq::Manager,@options,([ []: (:concurrency) -> XXX ] and [ []: (:fetch) -> XXX ] and [ []: (:labels) -> XXX ] and [ []: (:queues) -> XXX ] and [ []: (:tag) -> XXX ] and [ []: (:timeout) -> XXX ] and [ inspect: () -> XXX ]),,
-Sidekiq::Manager,@count,Number,,
-Sidekiq::Manager,@done,(false or true),,
-Sidekiq::Manager,@workers,Set,,
-Sidekiq::Manager,@plock,Thread::Mutex,,
 Sidekiq::Manager,initialize,(?([ []: (:concurrency) -> XXX ] and [ []: (:fetch) -> XXX ] and [ []: (:labels) -> XXX ] and [ []: (:queues) -> XXX ] and [ []: (:tag) -> XXX ] and [ []: (:timeout) -> XXX ] and [ inspect: () -> XXX ])) -> self,,"def initialize(options = {})
       logger.debug { options.inspect }
       @options = options
@@ -1468,17 +1423,14 @@ Sidekiq::Monitor::Status,time_ago,(Numeric) -> String,,"def time_ago(timestamp)
       return ""an hour ago"" if seconds < 7200
       ""#{seconds.floor / 60 / 60} hours ago""
     end"
-Sidekiq::Monitor::Status,@queue_data,(XXX or XXX),,
 Sidekiq::Monitor::Status,queue_data,() -> (XXX or XXX),,"def queue_data
       @queue_data ||= Sidekiq::Queue.all.map { |q|
         QUEUE_STRUCT.new(q.name, q.size.to_s, sprintf(""%#.2f"", q.latency))
       }
     end"
-Sidekiq::Monitor::Status,@process_set,Sidekiq::ProcessSet,,
 Sidekiq::Monitor::Status,process_set,() -> Sidekiq::ProcessSet,,"def process_set
       @process_set ||= Sidekiq::ProcessSet.new
     end"
-Sidekiq::Monitor::Status,@stats,Sidekiq::Stats,,
 Sidekiq::Monitor::Status,stats,() -> Sidekiq::Stats,,"def stats
       @stats ||= Sidekiq::Stats.new
     end"
@@ -1523,16 +1475,7 @@ Sidekiq::Paginator,page,"(XXX, ?([ *: (XXX) -> XXX ] and [ to_i: () -> Number ])
         end
       end
     end"
-Sidekiq::Processor,@mgr,Sidekiq::Manager,,
-Sidekiq::Processor,@down,(Number or false),,
-Sidekiq::Processor,@done,(false or true),,
-Sidekiq::Processor,@job,nil,,
-Sidekiq::Processor,@thread,nil,,
-Sidekiq::Processor,@strategy,Sidekiq::BasicFetch,,
-Sidekiq::Processor,@reloader,XXX,,
-Sidekiq::Processor,@job_logger,Sidekiq::JobLogger,,
-Sidekiq::Processor,@retrier,Sidekiq::JobRetry,,
-Sidekiq::Processor,initialize,((Sidekiq::Manager and [ processor_stopped: (Sidekiq::Processor) -> XXX ])) -> self,,"def initialize(mgr)
+Sidekiq::Processor,initialize,(Sidekiq::Manager) -> self,,"def initialize(mgr)
       @mgr = mgr
       @down = false
       @done = false
@@ -1632,8 +1575,6 @@ Sidekiq::Processor,constantize,(XXX) -> Object,,"def constantize(str)
         constant.const_get(name, false)
       end
     end"
-Sidekiq::Processor::Counter,@value,Number,,
-Sidekiq::Processor::Counter,@lock,Thread::Mutex,,
 Sidekiq::Processor::Counter,initialize,() -> self,,"def initialize
         @value = 0
         @lock = Mutex.new
@@ -1648,16 +1589,14 @@ Sidekiq::Processor::Counter,reset,() -> XXX,,"def reset
           val
         }
       end"
-Sidekiq::Processor::SharedWorkerState,@worker_state,"Hash<XXX, XXX>",,
-Sidekiq::Processor::SharedWorkerState,@lock,Thread::Mutex,,
 Sidekiq::Processor::SharedWorkerState,initialize,() -> self,,"def initialize
         @worker_state = {}
         @lock = Mutex.new
       end"
-Sidekiq::Processor::SharedWorkerState,set,"(XXX, XXX) -> XXX",,"def set(tid, hash)
+Sidekiq::Processor::SharedWorkerState,set,"(Number, XXX) -> XXX",,"def set(tid, hash)
         @lock.synchronize { @worker_state[tid] = hash }
       end"
-Sidekiq::Processor::SharedWorkerState,delete,(XXX) -> XXX,,"def delete(tid)
+Sidekiq::Processor::SharedWorkerState,delete,(Number) -> XXX,,"def delete(tid)
         @lock.synchronize { @worker_state.delete(tid) }
       end"
 Sidekiq::Processor::SharedWorkerState,dup,() -> XXX,,"def dup
@@ -1692,10 +1631,6 @@ Sidekiq::Scheduled::Enq,enqueue_jobs,"(?XXX, ?[ each: () {(XXX) -> XXX} -> XXX ]
           end
         end
       end"
-Sidekiq::Scheduled::Poller,@enq,Sidekiq::Scheduled::Enq,,
-Sidekiq::Scheduled::Poller,@sleeper,ConnectionPool::TimedStack,,
-Sidekiq::Scheduled::Poller,@done,(false or true),,
-Sidekiq::Scheduled::Poller,@thread,nil,,
 Sidekiq::Scheduled::Poller,initialize,() -> self,,"def initialize
         @enq = (Sidekiq.options[:scheduled_enq] || Sidekiq::Scheduled::Enq).new
         @sleeper = ConnectionPool::TimedStack.new
@@ -1792,9 +1727,6 @@ Sidekiq::Scheduled::Poller,initial_wait,() -> nil,,"def initial_wait
         @sleeper.pop(total)
       rescue Timeout::Error
       end"
-Sidekiq::Testing,@server_chain,Sidekiq::Middleware::Chain,,
-Sidekiq::Queues,@jobs_by_queue,"Hash<String, Array<Sidekiq::Job>>",,
-Sidekiq::Queues,@jobs_by_worker,"Hash<String, Array<Sidekiq::Job>>",,
 Sidekiq::Worker,logger,() -> XXX,,"def logger
       Sidekiq.logger
     end"
@@ -1828,8 +1760,6 @@ Sidekiq::Worker::ClassMethods,perform_in,"([ to_f: () -> XXX ], *XXX) -> XXX",,"
 
         client_push(item)
       end"
-Sidekiq::Worker::Setter,@klass,Sidekiq::Worker::ClassMethods,,
-Sidekiq::Worker::Setter,@opts,[ merge!: (XXX) -> XXX ],,
 Sidekiq::Worker::Setter,initialize,"(Sidekiq::Worker::ClassMethods, [ merge!: (XXX) -> XXX ]) -> self",,"def initialize(klass, opts)
         @klass = klass
         @opts = opts
@@ -1844,7 +1774,7 @@ Sidekiq::Util,watchdog,(XXX) { () -> XXX } -> XXX,,"def watchdog(last_words)
       handle_exception(ex, {context: last_words})
       raise ex
     end"
-Sidekiq::Util,safe_thread,(XXX) { XXX } -> XXX,,"def safe_thread(name, &block)
+Sidekiq::Util,safe_thread,(String) { XXX } -> XXX,,"def safe_thread(name, &block)
       Thread.new do
         Thread.current.name = name
         watchdog(name, &block)
@@ -1856,17 +1786,15 @@ Sidekiq::Util,logger,() -> XXX,,"def logger
 Sidekiq::Util,redis,() { XXX } -> XXX,,"def redis(&block)
       Sidekiq.redis(&block)
     end"
-Sidekiq::Util,tid,() -> XXX,,"def tid
+Sidekiq::Util,tid,() -> Number,,"def tid
       Thread.current[""sidekiq_tid""] ||= (Thread.current.object_id ^ ::Process.pid).to_s(36)
     end"
 Sidekiq::Util,hostname,() -> String,,"def hostname
       ENV[""DYNO""] || Socket.gethostname
     end"
-Sidekiq::Util,@@process_nonce,(XXX or XXX),,
 Sidekiq::Util,process_nonce,() -> (XXX or XXX),,"def process_nonce
       @@process_nonce ||= SecureRandom.hex(6)
     end"
-Sidekiq::Util,@@identity,String,,
 Sidekiq::Util,identity,() -> String,,"def identity
       @@identity ||= ""#{hostname}:#{::Process.pid}:#{process_nonce}""
     end"
@@ -1884,10 +1812,6 @@ Sidekiq::Util,fire_event,"(XXX, ?([ []: (:reraise) -> XXX ] and [ []: (:reverse)
       end
       arr.clear
     end"
-Sidekiq::Web,@middlewares,"Array<[Array<XXX>, XXX]>",,
-Sidekiq::Web,@custom_tabs,"Hash<XXX, XXX>",,
-Sidekiq::Web,@locales,[String],,
-Sidekiq::Web,@views,String,,
 Sidekiq::Web,settings,() -> [s]Sidekiq::Web,,"def settings
       self.class.settings
     end"
@@ -1900,7 +1824,6 @@ Sidekiq::Web,middlewares,"() -> Array<[Array<XXX>, XXX]>",,"def middlewares
 Sidekiq::Web,call,(XXX) -> XXX,,"def call(env)
       app.call(env)
     end"
-Sidekiq::Web,@app,Sidekiq::Web,,
 Sidekiq::Web,app,() -> Sidekiq::Web,,"def app
       @app ||= build
     end"
@@ -1913,7 +1836,6 @@ Sidekiq::Web,disable,(*XXX) -> Array<XXX>,,"def disable(*opts)
 Sidekiq::Web,set,"(XXX, XXX) -> Object",,"def set(attribute, value)
       send(:""#{attribute}="", value)
     end"
-Sidekiq::Web,@sessions,XXX,,
 Sidekiq::Web,sessions,() -> XXX,,"def sessions
       unless instance_variable_defined?(""@sessions"")
         @sessions = self.class.sessions
@@ -1985,7 +1907,6 @@ Sidekiq::Middleware::Chain,initialize_copy,"([ instance_variable_set: (:@entries
 Sidekiq::Middleware::Chain,each,() { XXX } -> XXX,,"def each(&block)
         entries.each(&block)
       end"
-Sidekiq::Middleware::Chain,@entries,Array<Sidekiq::Middleware::Entry>,,
 Sidekiq::Middleware::Chain,initialize,() { (Sidekiq::Middleware::Chain) -> XXX } -> self,,"def initialize
         @entries = nil
         yield self if block_given?
@@ -2019,7 +1940,7 @@ Sidekiq::Middleware::Chain,insert_after,"(XXX, [ new: (*XXX) -> XXX ], *XXX) -> 
 Sidekiq::Middleware::Chain,exists?,(XXX) -> (false or true),,"def exists?(klass)
         any? { |entry| entry.klass == klass }
       end"
-Sidekiq::Middleware::Chain,empty?,() -> XXX,,"def empty?
+Sidekiq::Middleware::Chain,empty?,() -> (false or true),,"def empty?
         @entries.nil? || @entries.empty?
       end"
 Sidekiq::Middleware::Chain,retrieve,() -> Enumerator<t>,,"def retrieve
@@ -2028,8 +1949,6 @@ Sidekiq::Middleware::Chain,retrieve,() -> Enumerator<t>,,"def retrieve
 Sidekiq::Middleware::Chain,clear,() -> XXX,,"def clear
         entries.clear
       end"
-Sidekiq::Middleware::Entry,@klass,[ new: (*XXX) -> XXX ],,
-Sidekiq::Middleware::Entry,@args,Array<XXX>,,
 Sidekiq::Middleware::Entry,initialize,"([ new: (*XXX) -> XXX ], *XXX) -> self",,"def initialize(klass, *args)
         @klass = klass
         @args = args
@@ -2047,7 +1966,6 @@ Sidekiq::Middleware::I18n::Server,call,"(XXX, [ fetch: (String, XXX) -> XXX ], X
 Sidekiq::WebAction,settings,() -> [s]Sidekiq::Web,,"def settings
       Web.settings
     end"
-Sidekiq::WebAction,@request,Rack::Request,,
 Sidekiq::WebAction,request,() -> Rack::Request,,"def request
       @request ||= ::Rack::Request.new(env)
     end"
@@ -2071,7 +1989,6 @@ Sidekiq::WebAction,route_params,() -> XXX,,"def route_params
 Sidekiq::WebAction,session,() -> XXX,,"def session
       env[RACK_SESSION]
     end"
-Sidekiq::WebAction,@_erb,(false or true),,
 Sidekiq::WebAction,erb,"([ is_a?: (Class) -> XXX ], ?[ []: (:locals) -> XXX ]) -> Object",,"def erb(content, options = {})
       if content.is_a? Symbol
         unless respond_to?(:""_erb_#{content}"")
@@ -2101,9 +2018,6 @@ Sidekiq::WebAction,render,"([ !=: (:erb) -> XXX ], [ is_a?: (Class) -> XXX ], ?[
 Sidekiq::WebAction,json,"(XXX) -> [Number, Hash<String, String>, [XXX]]",,"def json(payload)
       [200, {""Content-Type"" => ""application/json"", ""Cache-Control"" => ""no-cache""}, [Sidekiq.dump_json(payload)]]
     end"
-Sidekiq::WebAction,@env,"([ []: (String) -> XXX ] and [ []=: (String, XXX) -> XXX ])",,
-Sidekiq::WebAction,@block,XXX,,
-Sidekiq::WebAction,@files,"Hash<XXX, XXX>",,
 Sidekiq::WebAction,initialize,"(([ []: (String) -> XXX ] and [ []=: (String, XXX) -> XXX ]), XXX) -> self",,"def initialize(env, block)
       @_erb = false
       @env = env
@@ -2119,8 +2033,7 @@ Sidekiq::WebAction,_erb,"([ is_a?: (Class) -> XXX ], [ each: () {(XXX, XXX) -> X
         send(:""_erb_#{file}"")
       end
     end"
-Sidekiq::WebApplication,@klass,[ settings: () -> XXX ],,
-Sidekiq::WebApplication,initialize,([ settings: () -> XXX ]) -> self,,"def initialize(klass)
+Sidekiq::WebApplication,initialize,((Sidekiq::Web or Sidekiq::WebAction or Sidekiq::WebApplication)) -> self,,"def initialize(klass)
       @klass = klass
     end"
 Sidekiq::WebApplication,settings,() -> XXX,,"def settings
@@ -2158,8 +2071,6 @@ Sidekiq::WebApplication,call,"(([ []: (String) -> XXX ] and [ []=: (String, XXX)
 
       resp
     end"
-Sidekiq::WebApplication,@befores,"Array<[(Regexp or XXX), XXX]>",,
-Sidekiq::WebApplication,@afters,"Array<[(Regexp or XXX), XXX]>",,
 Sidekiq::WebRouter,get,(XXX) { XXX } -> nil,,"def get(path, &block)
       route(GET, path, &block)
     end"
@@ -2175,7 +2086,6 @@ Sidekiq::WebRouter,patch,(XXX) { XXX } -> nil,,"def patch(path, &block)
 Sidekiq::WebRouter,delete,(XXX) { XXX } -> nil,,"def delete(path, &block)
       route(DELETE, path, &block)
     end"
-Sidekiq::WebRouter,@routes,"Hash<String, Array<XXX>>",,
 Sidekiq::WebRouter,route,"([ ==: (String) -> XXX ], XXX) { XXX } -> nil",,"def route(method, path, &block)
       @routes ||= {GET => [], POST => [], PUT => [], PATCH => [], DELETE => [], HEAD => []}
 
@@ -2201,15 +2111,11 @@ Sidekiq::WebRouter,match,"(([ []: (String) -> XXX ] and [ []=: (String, XXX) -> 
 
       nil
     end"
-Sidekiq::WebRoute,@request_method,[ ==: (String) -> XXX ],,
-Sidekiq::WebRoute,@pattern,XXX,,
-Sidekiq::WebRoute,@block,XXX,,
 Sidekiq::WebRoute,initialize,"([ ==: (String) -> XXX ], XXX, XXX) -> self",,"def initialize(request_method, pattern, block)
       @request_method = request_method
       @pattern = pattern
       @block = block
     end"
-Sidekiq::WebRoute,@matcher,Regexp,,
 Sidekiq::WebRoute,matcher,() -> Regexp,,"def matcher
       @matcher ||= compile
     end"
@@ -2284,7 +2190,7 @@ Sidekiq::WebRoute,match,"(XXX, ([ ==: (XXX) -> XXX ] and [ match: (XXX) -> XXX ]
 [s]Sidekiq::Client,push_bulk,"(([ []: (String) -> XXX ] and [ []=: (String, Number) -> XXX ] and [ []=: (String, String) -> XXX ] and [ delete: (String) -> XXX ] and [ is_a?: (Class) -> XXX ] and [ key?: (String) -> XXX ] and [ merge: (Hash<String, (Number or XXX or XXX)>) -> XXX ])) -> Array<XXX>",,"def push_bulk(items)
         new.push_bulk(items)
       end"
-[s]Sidekiq::Client,enqueue_in,"(XXX, [ perform_in: (XXX, *XXX) -> XXX ], *XXX) -> XXX",,"def enqueue_in(interval, klass, *args)
+[s]Sidekiq::Client,enqueue_in,"(XXX, (Sidekiq::Worker::ClassMethods or Sidekiq::Worker::Setter), *XXX) -> XXX",,"def enqueue_in(interval, klass, *args)
         klass.perform_in(interval, *args)
       end"
 [s]Sidekiq::BasicFetch,bulk_requeue,"(([ each: () {(XXX) -> XXX} -> XXX ] and [ empty?: () -> XXX ] and [ size: () -> XXX ]), XXX) -> nil",,"def self.bulk_requeue(inprogress, options)
@@ -2436,16 +2342,16 @@ Sidekiq::WebRoute,match,"(XXX, ([ ==: (XXX) -> XXX ] and [ match: (XXX) -> XXX ]
 [s]Sidekiq::Testing,inline!,() { XXX } -> XXX,,"def inline!(&block)
         __set_test_mode(:inline, &block)
       end"
-[s]Sidekiq::Testing,enabled?,() -> XXX,,"def enabled?
+[s]Sidekiq::Testing,enabled?,() -> (false or true),,"def enabled?
         __test_mode != :disable
       end"
-[s]Sidekiq::Testing,disabled?,() -> XXX,,"def disabled?
+[s]Sidekiq::Testing,disabled?,() -> (false or true),,"def disabled?
         __test_mode == :disable
       end"
-[s]Sidekiq::Testing,fake?,() -> XXX,,"def fake?
+[s]Sidekiq::Testing,fake?,() -> (false or true),,"def fake?
         __test_mode == :fake
       end"
-[s]Sidekiq::Testing,inline?,() -> XXX,,"def inline?
+[s]Sidekiq::Testing,inline?,() -> (false or true),,"def inline?
         __test_mode == :inline
       end"
 [s]Sidekiq::Testing,server_middleware,() { (Sidekiq::Middleware::Chain) -> XXX } -> Sidekiq::Middleware::Chain,,"def server_middleware
@@ -2474,7 +2380,7 @@ Sidekiq::WebRoute,match,"(XXX, ([ ==: (XXX) -> XXX ] and [ match: (XXX) -> XXX ]
 [s]Sidekiq::Queues,jobs_by_worker,"() -> Hash<String, Array<Sidekiq::Job>>",,"def jobs_by_worker
         @jobs_by_worker ||= RDL.type_cast(Hash.new { |hash, key| hash[key] = [] }, ""Hash<String, Array<Sidekiq::Job>>"")
       end"
-[s]Sidekiq::Queues,delete_for,"(XXX, [ to_s: () -> String ], XXX) -> XXX",,"def delete_for(jid, queue, klass)
+[s]Sidekiq::Queues,delete_for,"(Number, [ to_s: () -> String ], XXX) -> XXX",,"def delete_for(jid, queue, klass)
         jobs_by_queue[queue.to_s].delete_if { |job| job[""jid""] == jid }
         jobs_by_worker[klass].delete_if { |job| job[""jid""] == jid }
       end"
@@ -2501,7 +2407,7 @@ Sidekiq::WebRoute,match,"(XXX, ([ ==: (XXX) -> XXX ] and [ match: (XXX) -> XXX ]
           end
         end
       end"
-[s]Sidekiq::Worker,included,(([ ancestors: () -> XXX ] and [ extend: (Module) -> XXX ] and [ include: (Module) -> XXX ] and [ name: () -> XXX ])) -> XXX,,"def self.included(base)
+[s]Sidekiq::Worker,included,(Module) -> XXX,,"def self.included(base)
       raise ArgumentError, ""Sidekiq::Worker cannot be included in an ActiveJob: #{base.name}"" if base.ancestors.any? { |c| c.name == ""ActiveJob::Base"" }
 
       base.include(Options)
@@ -2557,10 +2463,10 @@ Sidekiq::WebRoute,match,"(XXX, ([ ==: (XXX) -> XXX ] and [ match: (XXX) -> XXX ]
         WebAction.send(:include, mod)
       end
     end"
-[s]Sidekiq::WebApplication,before,"(?[ gsub: (String, String) -> XXX ]) -> XXX",,"def self.before(path = nil, &block)
+[s]Sidekiq::WebApplication,before,(?((Rake::FileList or String))) -> XXX,,"def self.before(path = nil, &block)
       befores << [path && Regexp.new(""\\A#{path.gsub(""*"", "".*"")}\\z""), block]
     end"
-[s]Sidekiq::WebApplication,after,"(?[ gsub: (String, String) -> XXX ]) -> XXX",,"def self.after(path = nil, &block)
+[s]Sidekiq::WebApplication,after,(?((Rake::FileList or String))) -> XXX,,"def self.after(path = nil, &block)
       afters << [path && Regexp.new(""\\A#{path.gsub(""*"", "".*"")}\\z""), block]
     end"
 [s]Sidekiq::WebApplication,run_befores,"(XXX, XXX) -> XXX",,"def self.run_befores(app, action)
@@ -2575,5 +2481,3 @@ Sidekiq::WebRoute,match,"(XXX, ([ ==: (XXX) -> XXX ] and [ match: (XXX) -> XXX ]
 [s]Sidekiq::WebApplication,afters,"() -> Array<[(Regexp or XXX), XXX]>",,"def self.afters
       @afters ||= []
     end"
-_Globals,$stdout,[ tty?: () -> XXX ],,
-_Globals,$0,String,,
